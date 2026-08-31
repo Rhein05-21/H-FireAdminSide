@@ -7,7 +7,7 @@
     "icon": "./assets/h-fire_logo.png",
     "scheme": "hfireadmin",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/h-fire_logo.png",
       "resizeMode": "contain",
