@@ -5,7 +5,7 @@ import { Session, User, createClient } from '@supabase/supabase-js';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-export type UserRole = 'admin' | 'hoa' | 'guard';
+export type UserRole = 'admin' | 'hoa' | 'guard' | 'resident';
 
 interface AuthContextType {
   session: Session | null;
@@ -268,6 +268,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       admin: 'Chief Monitoring Officer (Admin)',
       hoa: 'HOA President / Director',
       guard: 'Main Gate Security Officer',
+      resident: 'Community Household Resident',
     };
 
     const demoProfile: ProfileRecord = {

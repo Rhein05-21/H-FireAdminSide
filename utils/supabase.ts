@@ -58,6 +58,7 @@ export interface ProfileRecord {
   emergency_hotline?: string;
   address?: string;
   location_url?: string;
+  device_mac?: string;
   updated_at?: string;
 }
 

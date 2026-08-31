@@ -6,8 +6,10 @@ import {
   ScrollView, 
   TouchableOpacity, 
   Linking, 
-  Platform 
+  Platform,
+  Alert
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAdmin } from '../../context/AdminContext';
@@ -32,14 +34,15 @@ import {
   Calendar,
   Compass,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  Unlink
 } from 'lucide-react-native';
 
 export default function DeviceDetailsScreen() {
   const { mac } = useLocalSearchParams<{ mac: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { devices, secondaryNodes, triggerEmergencyAlert } = useAdmin();
+  const { devices, secondaryNodes, triggerEmergencyAlert, unassignDevice } = useAdmin();
   const { role } = useAuth();
   const isAdmin = role === 'admin';
 
@@ -83,6 +86,32 @@ export default function DeviceDetailsScreen() {
     if (!number) return;
     const cleanNumber = number.replace(/[^0-9+]/g, '');
     Linking.openURL(`tel:${cleanNumber}`).catch(() => {});
+  };
+
+  const handleForceUnassign = () => {
+    if (!isAdmin) return;
+    Alert.alert(
+      'Force Unassign Sensor',
+      `Are you sure you want to disconnect "${device.label || device.mac}" from ${device.resident_name || 'Resident'}?\n\nThe sensor will immediately become an unassigned Community Sensor.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Force Unassign',
+          style: 'destructive',
+          onPress: async () => {
+            const res = await unassignDevice(device.mac);
+            if (res.success) {
+              if (Platform.OS !== 'web') {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              }
+              Alert.alert('Sensor Unassigned', `Device ${device.mac} is now an unassigned Community Sensor.`);
+            } else {
+              Alert.alert('Error', res.error || 'Failed to unassign sensor.');
+            }
+          }
+        }
+      ]
+    );
   };
 
   return (
@@ -173,16 +202,29 @@ export default function DeviceDetailsScreen() {
             />
           </View>
 
-          {/* Admin Edit Button */}
+          {/* Admin Edit & Unassign Buttons */}
           {isAdmin && (
-            <TouchableOpacity 
-              style={styles.adminEditBtn}
-              onPress={() => setEditModalVisible(true)}
-              activeOpacity={0.8}
-            >
-              <Edit3 color={COLORS.primary} size={16} style={{ marginRight: 8 }} />
-              <Text style={styles.adminEditBtnText}>Configure Node & Assign Household</Text>
-            </TouchableOpacity>
+            <View style={styles.adminButtonsRow}>
+              <TouchableOpacity 
+                style={[styles.adminEditBtn, Boolean(device.profile_id) && { flex: 1 }]}
+                onPress={() => setEditModalVisible(true)}
+                activeOpacity={0.8}
+              >
+                <Edit3 color={COLORS.primary} size={16} style={{ marginRight: 8 }} />
+                <Text style={styles.adminEditBtnText}>Configure Node</Text>
+              </TouchableOpacity>
+
+              {Boolean(device.profile_id) && (
+                <TouchableOpacity 
+                  style={styles.adminUnassignBtn}
+                  onPress={handleForceUnassign}
+                  activeOpacity={0.8}
+                >
+                  <Unlink color={COLORS.danger} size={15} style={{ marginRight: 6 }} />
+                  <Text style={styles.adminUnassignBtnText}>Unassign</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           )}
         </View>
 
@@ -606,6 +648,12 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 3,
   },
+  adminButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: SPACING.xs,
+  },
   adminEditBtn: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -615,12 +663,28 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(59, 130, 246, 0.3)',
     borderRadius: 12,
     paddingVertical: 12,
-    marginTop: SPACING.xs,
+    paddingHorizontal: 12,
   },
   adminEditBtnText: {
     color: COLORS.primary,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
+  },
+  adminUnassignBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  adminUnassignBtnText: {
+    color: COLORS.danger,
+    fontSize: 13,
+    fontWeight: '800',
   },
   sectionHeading: {
     color: COLORS.textSecondary,

@@ -70,6 +70,8 @@ interface AdminContextType {
   simulateDeviceTelemetry: (mac: string, ppm: number, flame: boolean) => Promise<void>;
   resetAllToSafeSimulation: () => Promise<void>;
   updateDeviceConfig: (mac: string, label: string, profileId: string | null) => Promise<{ success: boolean; error?: string }>;
+  unassignDevice: (mac: string) => Promise<{ success: boolean; error?: string }>;
+  updateUserRole: (userId: string, newRole: any) => Promise<{ success: boolean; error?: string }>;
   saveHotline: (hotline: EmergencyHotline) => Promise<void>;
   deleteHotline: (id: string) => Promise<void>;
   resetHotlinesToDefault: () => Promise<void>;
@@ -458,11 +460,19 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const liveTel = liveTelemetryMap[mac];
         const customConfig = deviceConfigMap[mac];
 
-        // Find linked resident profile (excluding admin accounts)
-        const nonAdminProfiles = loadedProfiles.filter(p => !p.is_admin && p.role?.toLowerCase() !== 'admin');
-        const profileId = customConfig?.profileId !== undefined 
-          ? (customConfig.profileId || undefined) 
-          : (d?.profile_id || latestLog?.profile_id || nonAdminProfiles[0]?.id);
+        // Resolve assigned resident profile without forced fallback
+        let profileId: string | undefined = undefined;
+        if (customConfig && customConfig.profileId !== undefined) {
+          // Explicit setting in device config (null = explicitly unassigned)
+          profileId = customConfig.profileId ? customConfig.profileId : undefined;
+        } else if (d && d.profile_id !== undefined) {
+          // Explicit setting in devices table (null/empty = unassigned)
+          profileId = d.profile_id || undefined;
+        } else {
+          // Check if any resident profile explicitly has this device_mac assigned in profiles table
+          const profileWithMac = loadedProfiles.find(p => p.device_mac?.toUpperCase() === mac);
+          profileId = profileWithMac?.id || undefined;
+        }
 
         const linkedProfile = profileId ? loadedProfiles.find(p => p.id === profileId) : undefined;
 
@@ -520,8 +530,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           current_ppm: currentPpm,
           flame: flameDetected,
           current_status: status,
-          resident_name: linkedProfile?.name || 'Community Resident',
-          resident_phone: linkedProfile?.emergency_hotline || '0917-000-0000',
+          resident_name: linkedProfile?.name || 'Unassigned (Community Sensor)',
+          resident_phone: linkedProfile?.emergency_hotline || 'N/A',
         };
       });
 
@@ -1057,8 +1067,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             block_lot: newBlockLot,
             latitude: newLat,
             longitude: newLng,
-            resident_name: targetProfile?.name || 'Community Resident',
-            resident_phone: targetProfile?.emergency_hotline || '0917-000-0000',
+            resident_name: targetProfile?.name || 'Unassigned (Community Sensor)',
+            resident_phone: targetProfile?.emergency_hotline || 'N/A',
           };
         }
         return d;
@@ -1066,7 +1076,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       // 2. Persist to Supabase Database & Realtime App Settings
       if (isSupabaseConfigured) {
-        await Promise.all([
+        const dbOperations: any[] = [
           supabase.from('devices').upsert({
             mac: targetMac,
             label: newLabel,
@@ -1091,13 +1101,159 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             }),
             updated_at: now,
           }, { onConflict: 'key' }),
-        ]);
+        ];
+
+        // If unassigning, clear device_mac from any profile previously mapped to this MAC
+        if (!profileId) {
+          dbOperations.push(
+            supabase.from('profiles').update({ device_mac: null, updated_at: now }).eq('device_mac', targetMac)
+          );
+        } else {
+          // Clear any previous profile with this MAC, then assign to target profile
+          dbOperations.push(
+            supabase.from('profiles').update({ device_mac: null, updated_at: now }).eq('device_mac', targetMac),
+            supabase.from('profiles').update({ device_mac: targetMac, updated_at: now }).eq('id', profileId)
+          );
+        }
+
+        await Promise.all(dbOperations);
       }
 
+      await refreshData();
       return { success: true };
     } catch (err: any) {
       console.error('Error updating device config:', err);
       return { success: false, error: err?.message || 'Failed to update device configuration' };
+    }
+  };
+
+  // Force Unassign Device (Admin Only)
+  const unassignDevice = async (
+    mac: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (role !== 'admin') {
+      return { 
+        success: false, 
+        error: 'Permission Denied: Only Administrators can unassign devices.' 
+      };
+    }
+
+    try {
+      const targetMac = mac.toUpperCase();
+      const defaultHouseName = targetMac === '20:50:0D:33:68:0C' ? 'Community Core Node 1' : `Sensor Node (${targetMac.slice(-5)})`;
+      const defaultLabel = targetMac === '20:50:0D:33:68:0C' ? 'Main Core MQ-2 & Optical Flame' : `Satellite Sensor Node (${targetMac.slice(-5)})`;
+      const now = new Date().toISOString();
+
+      // 1. Immediately update in-memory devices state
+      setDevices(prev => prev.map(d => {
+        if (d.mac === targetMac) {
+          return {
+            ...d,
+            label: defaultLabel,
+            profile_id: undefined,
+            house_name: defaultHouseName,
+            resident_name: 'Unassigned (Community Sensor)',
+            resident_phone: 'N/A',
+          };
+        }
+        return d;
+      }));
+
+      // 2. Persist unassign across Supabase tables
+      if (isSupabaseConfigured) {
+        await Promise.all([
+          // Clear profile_id in devices
+          supabase.from('devices').upsert({
+            mac: targetMac,
+            label: defaultLabel,
+            profile_id: null,
+            house_name: defaultHouseName,
+            block_lot: 'Block 1 Lot 1',
+            last_seen: now,
+          }, { onConflict: 'mac' }),
+
+          // Clear device_mac on any linked user profile
+          supabase.from('profiles').update({
+            device_mac: null,
+            updated_at: now,
+          }).eq('device_mac', targetMac),
+
+          // Explicitly save profileId: null in app_settings
+          supabase.from('app_settings').upsert({
+            key: `device_config_${targetMac.replace(/:/g, '')}`,
+            value: JSON.stringify({
+              mac: targetMac,
+              label: defaultLabel,
+              profileId: null,
+              houseName: defaultHouseName,
+              blockLot: 'Block 1 Lot 1',
+              lat: 14.1777,
+              lng: 121.2551,
+            }),
+            updated_at: now,
+          }, { onConflict: 'key' }),
+        ]);
+      }
+
+      await refreshData();
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error unassigning device:', err);
+      return { success: false, error: err?.message || 'Failed to unassign device' };
+    }
+  };
+
+  // Update User Role (Admin Only: assign admin, hoa, guard, or resident)
+  const updateUserRole = async (
+    userId: string, 
+    newRole: any
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (role !== 'admin') {
+      return { 
+        success: false, 
+        error: 'Permission Denied: Only Administrators can modify user roles.' 
+      };
+    }
+
+    try {
+      const isAdminRole = newRole === 'admin';
+      const now = new Date().toISOString();
+
+      // 1. Immediately update in-memory profiles state
+      setProfiles(prev => prev.map(p => {
+        if (p.id === userId) {
+          return {
+            ...p,
+            role: newRole,
+            is_admin: isAdminRole,
+            updated_at: now,
+          };
+        }
+        return p;
+      }));
+
+      // 2. Persist role update in Supabase
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            role: newRole,
+            is_admin: isAdminRole,
+            updated_at: now,
+          })
+          .eq('id', userId);
+
+        if (error) {
+          console.error('Error updating user role in Supabase:', error);
+          return { success: false, error: error.message };
+        }
+      }
+
+      await refreshData();
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error updating user role:', err);
+      return { success: false, error: err?.message || 'Failed to update user role' };
     }
   };
 
@@ -1190,6 +1346,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         simulateDeviceTelemetry,
         resetAllToSafeSimulation,
         updateDeviceConfig,
+        unassignDevice,
+        updateUserRole,
         saveHotline,
         deleteHotline,
         resetHotlinesToDefault,

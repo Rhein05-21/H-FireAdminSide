@@ -9,14 +9,16 @@ import {
   TextInput, 
   Linking, 
   Platform,
-  FlatList,
-  Dimensions
+  Alert,
+  ActivityIndicator
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useAdmin } from '../context/AdminContext';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, UserRole } from '../context/AuthContext';
 import { ProfileRecord, DeviceRecord } from '../utils/supabase';
 import { COLORS, SPACING, SHADOWS } from '../constants/theme';
 import { getStatusColor, THRESHOLDS } from '../constants/thresholds';
+import { EditDeviceModal } from './EditDeviceModal';
 import { 
   Users, 
   ShieldCheck, 
@@ -37,7 +39,11 @@ import {
   ExternalLink,
   CheckCircle2,
   AlertTriangle,
-  Clock
+  Clock,
+  UserCog,
+  Unlink,
+  Check,
+  Plus
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 
@@ -46,25 +52,35 @@ interface UserDirectoryModalProps {
   onClose: () => void;
 }
 
-type RoleFilter = 'all' | 'admin' | 'hoa' | 'guard' | 'resident' | 'with_device';
+type RoleFilter = 'all' | 'admin' | 'hoa' | 'guard' | 'resident' | 'with_device' | 'unassigned_devices';
 
 export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
   visible,
   onClose,
 }) => {
-  const { profiles, devices } = useAdmin();
-  const { profile: currentAdminProfile } = useAuth();
+  const { profiles, devices, unassignDevice, updateUserRole } = useAdmin();
+  const { profile: currentAdminProfile, role: currentAdminRole } = useAuth();
+  const isAdmin = currentAdminRole === 'admin';
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<RoleFilter>('all');
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
 
-  // Merge loaded profiles with any active demo/admin profile fallback if empty
+  // Role Assignment State
+  const [roleModalVisible, setRoleModalVisible] = useState(false);
+  const [targetUserForRole, setTargetUserForRole] = useState<ProfileRecord | null>(null);
+  const [selectedRoleToAssign, setSelectedRoleToAssign] = useState<UserRole>('resident');
+  const [isUpdatingRole, setIsUpdatingRole] = useState(false);
+
+  // Edit/Assign Device Modal State
+  const [selectedDeviceForEdit, setSelectedDeviceForEdit] = useState<DeviceRecord | null>(null);
+
+  // Merge loaded profiles with active admin profile fallback if empty
   const allProfiles = useMemo(() => {
     let list: ProfileRecord[] = [...profiles];
     if (list.length === 0 && currentAdminProfile) {
       list = [currentAdminProfile];
     }
-    // Remove duplicate profiles by ID or email
     const seen = new Set<string>();
     return list.filter(p => {
       const key = (p.id || p.email || p.name).toLowerCase();
@@ -76,17 +92,17 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
 
   // Find linked devices for a user profile
   const getLinkedDevicesForProfile = (p: ProfileRecord): DeviceRecord[] => {
-    const pName = p.name?.trim().toLowerCase();
     const pId = p.id;
-    const pBlock = p.block_lot?.trim().toLowerCase();
-
     return devices.filter(d => {
       if (pId && d.profile_id === pId) return true;
-      if (pName && d.resident_name?.trim().toLowerCase() === pName) return true;
-      if (pBlock && d.block_lot?.trim().toLowerCase() === pBlock) return true;
       return false;
     });
   };
+
+  // Unassigned devices list
+  const unassignedDevices = useMemo(() => {
+    return devices.filter(d => !d.profile_id);
+  }, [devices]);
 
   // Filter and search
   const filteredProfiles = useMemo(() => {
@@ -103,6 +119,7 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
       if (selectedRoleFilter === 'guard' && pRole !== 'guard') return false;
       if (selectedRoleFilter === 'resident' && !isResident) return false;
       if (selectedRoleFilter === 'with_device' && linkedDevs.length === 0) return false;
+      if (selectedRoleFilter === 'unassigned_devices') return false;
 
       // Query search check
       if (!query) return true;
@@ -119,6 +136,15 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
     });
   }, [allProfiles, devices, searchQuery, selectedRoleFilter]);
 
+  // Filtered unassigned devices for search
+  const filteredUnassignedDevices = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return unassignedDevices.filter(d => {
+      if (!query) return true;
+      return d.mac.toLowerCase().includes(query) || d.label?.toLowerCase().includes(query) || d.house_name?.toLowerCase().includes(query);
+    });
+  }, [unassignedDevices, searchQuery]);
+
   // Statistics
   const stats = useMemo(() => {
     const total = allProfiles.length;
@@ -127,9 +153,10 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
     const guards = allProfiles.filter(p => p.role === 'guard').length;
     const residents = total - admins - hoas - guards;
     const withDevice = allProfiles.filter(p => getLinkedDevicesForProfile(p).length > 0).length;
+    const unassigned = unassignedDevices.length;
 
-    return { total, admins, hoas, guards, residents: Math.max(0, residents), withDevice };
-  }, [allProfiles, devices]);
+    return { total, admins, hoas, guards, residents: Math.max(0, residents), withDevice, unassigned };
+  }, [allProfiles, devices, unassignedDevices]);
 
   const handleCall = (phoneNumber?: string) => {
     if (!phoneNumber) return;
@@ -140,6 +167,67 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
   const handleOpenDevice = (mac: string) => {
     onClose();
     router.push(`/device/${encodeURIComponent(mac)}`);
+  };
+
+  const handleOpenRoleModal = (user: ProfileRecord) => {
+    if (!isAdmin) {
+      Alert.alert('Permission Denied', 'Only Chief Administrators can reassign user roles.');
+      return;
+    }
+    setTargetUserForRole(user);
+    const current = (user.role || (user.is_admin ? 'admin' : 'resident')).toLowerCase() as UserRole;
+    setSelectedRoleToAssign(current);
+    setRoleModalVisible(true);
+  };
+
+  const handleConfirmRoleChange = async () => {
+    if (!targetUserForRole) return;
+    setIsUpdatingRole(true);
+    const res = await updateUserRole(targetUserForRole.id, selectedRoleToAssign);
+    setIsUpdatingRole(false);
+
+    if (res.success) {
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      }
+      Alert.alert(
+        'Role Updated', 
+        `${targetUserForRole.name || 'User'}'s role has been successfully set to ${selectedRoleToAssign.toUpperCase()}.`
+      );
+      setRoleModalVisible(false);
+    } else {
+      Alert.alert('Update Failed', res.error || 'Failed to update user role.');
+    }
+  };
+
+  const handleForceUnassign = (mac: string, label: string, residentName: string) => {
+    if (!isAdmin) {
+      Alert.alert('Permission Denied', 'Only Administrators can force unassign sensor nodes.');
+      return;
+    }
+
+    Alert.alert(
+      'Force Unassign Sensor',
+      `Are you sure you want to disconnect "${label}" (${mac}) from ${residentName}?\n\nThe hardware node will immediately become an unassigned Community Sensor and will not re-assign automatically.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Force Unassign',
+          style: 'destructive',
+          onPress: async () => {
+            const res = await unassignDevice(mac);
+            if (res.success) {
+              if (Platform.OS !== 'web') {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              }
+              Alert.alert('Sensor Unassigned', `Sensor node ${mac} has been detached and is now an unassigned Community Sensor.`);
+            } else {
+              Alert.alert('Error', res.error || 'Failed to unassign sensor.');
+            }
+          }
+        }
+      ]
+    );
   };
 
   const formatLastSeen = (isoStr?: string) => {
@@ -154,8 +242,8 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
     }
   };
 
-  const renderRoleBadge = (rawRole?: string, isAdmin?: boolean) => {
-    const roleKey = (rawRole || (isAdmin ? 'admin' : 'resident')).toLowerCase();
+  const renderRoleBadge = (rawRole?: string, isAdminUser?: boolean) => {
+    const roleKey = (rawRole || (isAdminUser ? 'admin' : 'resident')).toLowerCase();
 
     if (roleKey === 'admin') {
       return (
@@ -228,7 +316,7 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
           />
         </TouchableOpacity>
 
-        {/* Quick Info Strip */}
+        {/* Quick Info & Role Action Strip */}
         <View style={styles.infoStrip}>
           <View style={styles.infoStripItem}>
             <MapPin color={COLORS.textSecondary} size={13} style={{ marginRight: 4 }} />
@@ -237,16 +325,29 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
             </Text>
           </View>
 
-          {user.emergency_hotline ? (
-            <TouchableOpacity 
-              style={styles.phoneLinkBtn}
-              onPress={() => handleCall(user.emergency_hotline)}
-              activeOpacity={0.7}
-            >
-              <Phone color={COLORS.primary} size={12} style={{ marginRight: 4 }} />
-              <Text style={styles.phoneLinkText}>{user.emergency_hotline}</Text>
-            </TouchableOpacity>
-          ) : null}
+          <View style={styles.actionStripButtons}>
+            {user.emergency_hotline ? (
+              <TouchableOpacity 
+                style={styles.phoneLinkBtn}
+                onPress={() => handleCall(user.emergency_hotline)}
+                activeOpacity={0.7}
+              >
+                <Phone color={COLORS.primary} size={12} style={{ marginRight: 4 }} />
+                <Text style={styles.phoneLinkText}>{user.emergency_hotline}</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {isAdmin && (
+              <TouchableOpacity 
+                style={styles.assignRoleBtn}
+                onPress={() => handleOpenRoleModal(user)}
+                activeOpacity={0.75}
+              >
+                <UserCog color={COLORS.accent} size={13} style={{ marginRight: 4 }} />
+                <Text style={styles.assignRoleBtnText}>Assign Role</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* Connected IoT Hardware Section */}
@@ -303,21 +404,34 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
                     </View>
                   </View>
 
-                  {/* Device GPS & Action */}
+                  {/* Device GPS & Action Buttons */}
                   <View style={styles.deviceFooterRow}>
                     <View style={styles.gpsInfo}>
                       <Clock color={COLORS.textMuted} size={11} style={{ marginRight: 4 }} />
                       <Text style={styles.gpsText}>{formatLastSeen(dev.last_seen)}</Text>
                     </View>
 
-                    <TouchableOpacity 
-                      style={styles.inspectBtn}
-                      onPress={() => handleOpenDevice(dev.mac)}
-                      activeOpacity={0.75}
-                    >
-                      <Text style={styles.inspectBtnText}>Inspect Live Node</Text>
-                      <ExternalLink color={COLORS.primary} size={12} style={{ marginLeft: 4 }} />
-                    </TouchableOpacity>
+                    <View style={styles.deviceActionGroup}>
+                      {isAdmin && (
+                        <TouchableOpacity 
+                          style={styles.forceUnassignBtn}
+                          onPress={() => handleForceUnassign(dev.mac, dev.label || dev.mac, user.name || 'Resident')}
+                          activeOpacity={0.75}
+                        >
+                          <Unlink color={COLORS.danger} size={12} style={{ marginRight: 4 }} />
+                          <Text style={styles.forceUnassignBtnText}>Force Unassign</Text>
+                        </TouchableOpacity>
+                      )}
+
+                      <TouchableOpacity 
+                        style={styles.inspectBtn}
+                        onPress={() => handleOpenDevice(dev.mac)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={styles.inspectBtnText}>Inspect Live Node</Text>
+                        <ExternalLink color={COLORS.primary} size={12} style={{ marginLeft: 4 }} />
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
               );
@@ -365,6 +479,81 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
             </View>
           </View>
         )}
+      </View>
+    );
+  };
+
+  // Render Unassigned Community Sensor Nodes Tab
+  const renderUnassignedDeviceCard = (dev: DeviceRecord) => {
+    const status = dev.current_status || 'Normal';
+    const statusCfg = getStatusColor(status);
+    const ppm = dev.current_ppm ?? 0;
+    const hasFlame = Boolean(dev.flame);
+
+    return (
+      <View key={dev.mac} style={styles.unassignedCard}>
+        <View style={styles.unassignedTop}>
+          <View style={{ flex: 1 }}>
+            <View style={styles.unassignedBadgeRow}>
+              <View style={styles.unassignedBadge}>
+                <Radio color={COLORS.warning} size={12} style={{ marginRight: 4 }} />
+                <Text style={styles.unassignedBadgeText}>COMMUNITY SENSOR (UNASSIGNED)</Text>
+              </View>
+              <View style={[styles.sensorStatusPill, { backgroundColor: statusCfg.bg, borderColor: statusCfg.border }]}>
+                <Text style={[styles.sensorStatusPillText, { color: statusCfg.color }]}>
+                  {status.toUpperCase()}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.unassignedTitle}>{dev.label || 'IoT Air Quality Node'}</Text>
+            <Text style={styles.unassignedMacText}>MAC: {dev.mac}</Text>
+          </View>
+        </View>
+
+        <View style={styles.telemetryGrid}>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricLabel}>GAS / SMOKE LEVEL</Text>
+            <Text style={[styles.metricVal, { color: statusCfg.color }]}>
+              {ppm} <Text style={styles.metricUnit}>PPM</Text>
+            </Text>
+          </View>
+
+          <View style={styles.metricCard}>
+            <Text style={styles.metricLabel}>OPTICAL FLAME</Text>
+            <Text style={[styles.metricVal, { color: hasFlame ? COLORS.danger : COLORS.normal }]}>
+              {hasFlame ? '🔥 FLAME ACTIVE' : '🛡️ SAFE'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.unassignedFooterRow}>
+          <View style={styles.gpsInfo}>
+            <Clock color={COLORS.textMuted} size={11} style={{ marginRight: 4 }} />
+            <Text style={styles.gpsText}>{formatLastSeen(dev.last_seen)}</Text>
+          </View>
+
+          <View style={styles.deviceActionGroup}>
+            {isAdmin && (
+              <TouchableOpacity 
+                style={styles.assignToResidentBtn}
+                onPress={() => setSelectedDeviceForEdit(dev)}
+                activeOpacity={0.75}
+              >
+                <Plus color={COLORS.white} size={13} style={{ marginRight: 4 }} />
+                <Text style={styles.assignToResidentBtnText}>Assign Household</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity 
+              style={styles.inspectBtn}
+              onPress={() => handleOpenDevice(dev.mac)}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.inspectBtnText}>Inspect</Text>
+              <ExternalLink color={COLORS.primary} size={12} style={{ marginLeft: 4 }} />
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
     );
   };
@@ -424,6 +613,10 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
                 <Text style={[styles.statPillVal, { color: COLORS.normal }]}>{stats.withDevice}</Text>
                 <Text style={styles.statPillLabel}>IoT Linked</Text>
               </View>
+              <View style={styles.statPill}>
+                <Text style={[styles.statPillVal, { color: COLORS.warning }]}>{stats.unassigned}</Text>
+                <Text style={styles.statPillLabel}>Unassigned</Text>
+              </View>
             </View>
 
             {/* Live Search Input */}
@@ -453,6 +646,7 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
                 { key: 'guard', label: `👮 Guards (${stats.guards})` },
                 { key: 'resident', label: `🏠 Residents (${stats.residents})` },
                 { key: 'with_device', label: `📡 IoT Linked (${stats.withDevice})` },
+                { key: 'unassigned_devices', label: `⚠️ Unassigned (${stats.unassigned})` },
               ].map(tab => {
                 const isSelected = selectedRoleFilter === tab.key;
                 return (
@@ -471,27 +665,180 @@ export const UserDirectoryModal: React.FC<UserDirectoryModalProps> = ({
             </ScrollView>
           </View>
 
-          {/* User List */}
+          {/* User / Device List */}
           <ScrollView 
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.listContent}
           >
-            {filteredProfiles.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Users color={COLORS.textMuted} size={42} style={{ marginBottom: SPACING.md }} />
-                <Text style={styles.emptyTitle}>No matching users found</Text>
-                <Text style={styles.emptySub}>
-                  {searchQuery 
-                    ? `No users match "${searchQuery}". Try searching with a different term.`
-                    : 'No users registered under this category.'}
-                </Text>
-              </View>
+            {selectedRoleFilter === 'unassigned_devices' ? (
+              filteredUnassignedDevices.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Radio color={COLORS.textMuted} size={42} style={{ marginBottom: SPACING.md }} />
+                  <Text style={styles.emptyTitle}>No unassigned sensors found</Text>
+                  <Text style={styles.emptySub}>
+                    All hardware sensor nodes are currently assigned to community households.
+                  </Text>
+                </View>
+              ) : (
+                filteredUnassignedDevices.map(renderUnassignedDeviceCard)
+              )
             ) : (
-              filteredProfiles.map(renderUserCard)
+              filteredProfiles.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Users color={COLORS.textMuted} size={42} style={{ marginBottom: SPACING.md }} />
+                  <Text style={styles.emptyTitle}>No matching users found</Text>
+                  <Text style={styles.emptySub}>
+                    {searchQuery 
+                      ? `No users match "${searchQuery}". Try searching with a different term.`
+                      : 'No users registered under this category.'}
+                  </Text>
+                </View>
+              ) : (
+                filteredProfiles.map(renderUserCard)
+              )
             )}
           </ScrollView>
         </View>
       </View>
+
+      {/* Role Assignment Modal */}
+      <Modal
+        visible={roleModalVisible}
+        transparent={true}
+        animationType="fade"
+        statusBarTranslucent={true}
+        onRequestClose={() => !isUpdatingRole && setRoleModalVisible(false)}
+      >
+        <View style={styles.roleModalBackdrop}>
+          <View style={styles.roleModalCard}>
+            <View style={styles.roleModalHeader}>
+              <View style={styles.roleModalIconRing}>
+                <UserCog color={COLORS.primary} size={22} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.roleModalTitle}>Assign User Role</Text>
+                <Text style={styles.roleModalSub} numberOfLines={1}>
+                  {targetUserForRole?.name} ({targetUserForRole?.email || 'No email'})
+                </Text>
+              </View>
+              <TouchableOpacity 
+                onPress={() => !isUpdatingRole && setRoleModalVisible(false)}
+                disabled={isUpdatingRole}
+                style={styles.closeBtn}
+              >
+                <X color={COLORS.textMuted} size={18} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.roleModalInstruction}>
+              Select the operational role to assign to this account in the H-Fire System:
+            </Text>
+
+            <View style={styles.roleOptionsList}>
+              {[
+                { 
+                  id: 'admin', 
+                  title: 'Chief Administrator', 
+                  desc: 'Full administrative access: officer registration, directory editing, device provisioning, emergency dispatch.',
+                  icon: ShieldCheck, 
+                  color: COLORS.primary 
+                },
+                { 
+                  id: 'hoa', 
+                  title: 'HOA Board Officer', 
+                  desc: 'Community monitoring oversight, incident inspection, siren controls, and resident directory access.',
+                  icon: Shield, 
+                  color: COLORS.accent 
+                },
+                { 
+                  id: 'guard', 
+                  title: 'Security Guard', 
+                  desc: 'Guardhouse rapid response station, speed-dial hotlines, siren management, and live incident tracking.',
+                  icon: Flame, 
+                  color: COLORS.warning 
+                },
+                { 
+                  id: 'resident', 
+                  title: 'Community Resident', 
+                  desc: 'Standard household occupant: personal IoT sensor pairing, household fire & gas alarm telemetry.',
+                  icon: Home, 
+                  color: COLORS.normal 
+                },
+              ].map(r => {
+                const isSelected = selectedRoleToAssign === r.id;
+                const IconComponent = r.icon;
+
+                return (
+                  <TouchableOpacity
+                    key={r.id}
+                    style={[
+                      styles.roleOptionCard,
+                      isSelected && { borderColor: r.color, backgroundColor: `${r.color}12` }
+                    ]}
+                    onPress={() => setSelectedRoleToAssign(r.id as UserRole)}
+                    activeOpacity={0.75}
+                    disabled={isUpdatingRole}
+                  >
+                    <View style={[styles.roleOptionIconBox, { backgroundColor: `${r.color}20` }]}>
+                      <IconComponent color={r.color} size={20} />
+                    </View>
+
+                    <View style={styles.roleOptionInfo}>
+                      <View style={styles.roleOptionTitleRow}>
+                        <Text style={[styles.roleOptionTitle, isSelected && { color: r.color }]}>
+                          {r.title}
+                        </Text>
+                        {isSelected && (
+                          <View style={[styles.selectedCheckBadge, { backgroundColor: r.color }]}>
+                            <Check color={COLORS.white} size={12} />
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.roleOptionDesc}>{r.desc}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.roleModalFooter}>
+              <TouchableOpacity 
+                style={styles.roleCancelBtn}
+                onPress={() => setRoleModalVisible(false)}
+                disabled={isUpdatingRole}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.roleCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.roleSaveBtn, isUpdatingRole && { opacity: 0.7 }]}
+                onPress={handleConfirmRoleChange}
+                disabled={isUpdatingRole}
+                activeOpacity={0.75}
+              >
+                {isUpdatingRole ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <>
+                    <CheckCircle2 color={COLORS.white} size={15} style={{ marginRight: 6 }} />
+                    <Text style={styles.roleSaveBtnText}>Save Role Assignment</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit/Assign Device Modal */}
+      {selectedDeviceForEdit && (
+        <EditDeviceModal
+          visible={Boolean(selectedDeviceForEdit)}
+          device={selectedDeviceForEdit}
+          onClose={() => setSelectedDeviceForEdit(null)}
+        />
+      )}
     </Modal>
   );
 };
@@ -696,18 +1043,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  actionStripButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   phoneLinkBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.primaryMuted,
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: 6,
   },
   phoneLinkText: {
     color: COLORS.primary,
     fontSize: 11,
     fontWeight: '700',
+  },
+  assignRoleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(6, 182, 212, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(6, 182, 212, 0.35)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  assignRoleBtnText: {
+    color: COLORS.accent,
+    fontSize: 11,
+    fontWeight: '800',
   },
   hardwareContainer: {
     marginTop: SPACING.md,
@@ -818,6 +1185,26 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: 11,
   },
+  deviceActionGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  forceUnassignBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  forceUnassignBtnText: {
+    color: COLORS.danger,
+    fontSize: 11,
+    fontWeight: '800',
+  },
   inspectBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -896,5 +1283,205 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     maxWidth: 280,
+  },
+  unassignedCard: {
+    backgroundColor: COLORS.cardBackground,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    padding: SPACING.md,
+    ...SHADOWS.sm,
+  },
+  unassignedTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  unassignedBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  unassignedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderColor: 'rgba(245, 158, 11, 0.4)',
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  unassignedBadgeText: {
+    color: COLORS.warning,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  unassignedTitle: {
+    color: COLORS.textPrimary,
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  unassignedMacText: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    marginTop: 1,
+  },
+  unassignedFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: SPACING.sm,
+    paddingTop: SPACING.sm,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.cardBorderSubtle,
+  },
+  assignToResidentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  assignToResidentBtnText: {
+    color: COLORS.white,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  roleModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.lg,
+  },
+  roleModalCard: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: COLORS.backgroundSecondary,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+    padding: SPACING.lg,
+    ...SHADOWS.lg,
+  },
+  roleModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SPACING.md,
+  },
+  roleModalIconRing: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primaryMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: SPACING.md,
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.3)',
+  },
+  roleModalTitle: {
+    color: COLORS.textPrimary,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  roleModalSub: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  roleModalInstruction: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: SPACING.md,
+    lineHeight: 17,
+  },
+  roleOptionsList: {
+    gap: 8,
+    marginBottom: SPACING.lg,
+  },
+  roleOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.cardBackground,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.cardBorderSubtle,
+    padding: SPACING.md,
+  },
+  roleOptionIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: SPACING.md,
+  },
+  roleOptionInfo: {
+    flex: 1,
+  },
+  roleOptionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  roleOptionTitle: {
+    color: COLORS.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  roleOptionDesc: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 2,
+  },
+  selectedCheckBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  roleModalFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  roleCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  roleCancelBtnText: {
+    color: COLORS.textMuted,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  roleSaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    minWidth: 160,
+    justifyContent: 'center',
+  },
+  roleSaveBtnText: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: '800',
   },
 });
