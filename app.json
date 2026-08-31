@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "H-Fire Admin",
-    "slug": "h-fire-admin",
+    "slug": "h-fireadminmonitoring",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/h-fire_logo.png",
