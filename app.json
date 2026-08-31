@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "H-Fire Admin",
+    "slug": "h-fire-admin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/h-fire_logo.png",
+    "scheme": "hfireadmin",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/h-fire_logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0F19"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "config": {
+        "googleMapsApiKey": "AIzaSyAczFD5g5Gvkw9i8Vu0UJ4v3u42kJ5tySo"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/h-fire_logo.png",
+        "backgroundColor": "#0B0F19"
+      },
+      "package": "com.hfire.admin",
+      "permissions": [
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_DATA_SYNC",
+        "WAKE_LOCK",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyAczFD5g5Gvkw9i8Vu0UJ4v3u42kJ5tySo"
+        }
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/h-fire_logo.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-notifications",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow H-Fire Admin to use your location for the community safety map."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "634392a5-65a6-4b1b-af6c-41c3d7ecea78"
+      }
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
