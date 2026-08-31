@@ -1,0 +1,21 @@
+node_modules/
+.expo/
+dist/
+web-build/
+npm-debug.*
+yarn-error.log
+.git/
+
+# Non-app documentation & schemas
+database/
+esp32/
+supabase_schema/
+scripts/
+*.md
+
+# Native credentials
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
