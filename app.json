@@ -25,6 +25,7 @@
         "backgroundColor": "#0B0F19"
       },
       "package": "com.hfire.admin",
+      "versionCode": 1,
       "permissions": [
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_DATA_SYNC",
