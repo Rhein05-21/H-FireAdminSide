@@ -26,6 +26,7 @@
       },
       "package": "com.hfire.admin",
       "versionCode": 2,
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_DATA_SYNC",
