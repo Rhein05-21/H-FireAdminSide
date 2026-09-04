@@ -3,6 +3,7 @@ import { supabase, isSupabaseConfigured, ProfileRecord, supabaseUrl, supabaseAno
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Session, User, createClient } from '@supabase/supabase-js';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 export type UserRole = 'admin' | 'hoa' | 'guard' | 'resident';
@@ -309,8 +310,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (finalStatus !== 'granted') return null;
 
       const tokenData = await Notifications.getExpoPushTokenAsync({
-        projectId: process.env.EXPO_PUBLIC_PROJECT_ID,
-      }).catch(() => null);
+        projectId: Constants.expoConfig?.extra?.eas?.projectId || process.env.EXPO_PUBLIC_PROJECT_ID || '634392a5-65a6-4b1b-af6c-41c3d7ecea78',
+      }).catch((err) => {
+        console.warn('Push token retrieval error:', err);
+        return null;
+      });
 
       const pushToken = tokenData?.data;
 
