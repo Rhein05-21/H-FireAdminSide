@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "config": {
-        "googleMapsApiKey": "AIzaSyAczFD5g5Gvkw9i8Vu0UJ4v3u42kJ5tySo"
+        "googleMapsApiKey": "AIzaSyC43FblIwS4qhG0t1ss4fLRDot-NNp7-WU"
       }
     },
     "android": {
@@ -25,7 +25,7 @@
         "backgroundColor": "#0B0F19"
       },
       "package": "com.hfire.admin",
-      "versionCode": 2,
+      "versionCode": 3,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "FOREGROUND_SERVICE",
@@ -36,7 +36,7 @@
       ],
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyAczFD5g5Gvkw9i8Vu0UJ4v3u42kJ5tySo"
+          "apiKey": "AIzaSyC43FblIwS4qhG0t1ss4fLRDot-NNp7-WU"
         }
       }
     },
