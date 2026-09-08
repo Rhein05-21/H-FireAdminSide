@@ -146,6 +146,56 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [devices]);
 
+  // Secondary Nodes Stale / Offline Watchdog (Checks every 2.5 seconds)
+  useEffect(() => {
+    const watchdogTimer = setInterval(() => {
+      const now = Date.now();
+      const SECONDARY_TIMEOUT_MS = 5000; // 5 seconds without updates = Offline
+
+      setSecondaryNodes(prev => {
+        let changed = false;
+        const nextState = { ...prev };
+
+        (['N2', 'N3'] as const).forEach(key => {
+          const node = nextState[key];
+          if (node.status !== 'Offline') {
+            const elapsed = now - new Date(node.last_seen).getTime();
+            if (elapsed > SECONDARY_TIMEOUT_MS) {
+              changed = true;
+              nextState[key] = {
+                ...node,
+                status: 'Offline',
+                ppm: 0,
+                flame: false,
+              };
+            }
+          }
+        });
+
+        return changed ? nextState : prev;
+      });
+    }, 2500);
+
+    return () => clearInterval(watchdogTimer);
+  }, []);
+
+  // Auto-dismiss Emergency Alert if the originating secondary node went Offline or is no longer in Danger
+  useEffect(() => {
+    if (activeEmergency && 'house_name' in activeEmergency) {
+      const house = String((activeEmergency as any).house_name || '').toLowerCase();
+      const isFromN2 = house.includes('sector 2') || house.includes('living room');
+      const isFromN3 = house.includes('sector 3') || house.includes('bedroom') || house.includes('kitchen');
+
+      if (isFromN2 && secondaryNodes.N2.status !== 'Danger') {
+        setActiveEmergency(null);
+        setIsSirenPlaying(false);
+      } else if (isFromN3 && secondaryNodes.N3.status !== 'Danger') {
+        setActiveEmergency(null);
+        setIsSirenPlaying(false);
+      }
+    }
+  }, [secondaryNodes, activeEmergency]);
+
   const silencedUntilRef = useRef<number>(0);
   const lastNotificationTimeRef = useRef<number>(0);
   const currentSirenTypeRef = useRef<string>('');
@@ -516,9 +566,11 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           ? liveTel.flame 
           : (isLocalFresh ? recentLocal.flame : Boolean(d?.flame));
 
-        const status = liveTel !== undefined 
-          ? liveTel.status 
-          : (isLocalFresh ? recentLocal.status : (latestLog ? (latestLog.status as GasStatus) : getStatusFromPPM(currentPpm, flameDetected, isOnline)));
+        const status = !isOnline 
+          ? 'Offline' 
+          : (liveTel !== undefined 
+              ? liveTel.status 
+              : (isLocalFresh ? recentLocal.status : (latestLog ? (latestLog.status as GasStatus) : getStatusFromPPM(currentPpm, flameDetected, isOnline))));
 
         return {
           mac,
