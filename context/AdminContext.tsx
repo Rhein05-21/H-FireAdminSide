@@ -361,7 +361,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             if (parsed.N2_Gas !== undefined || parsed.n2_gas !== undefined) {
               const n2Ppm = Number(parsed.N2_Gas ?? parsed.n2_gas ?? 0);
               const n2Flame = parsed.N2_Fire !== undefined ? (Number(parsed.N2_Fire) === 1 || Boolean(parsed.N2_Fire)) : false;
-              const n2Status = n2Ppm > 1500 || n2Flame ? 'Danger' : (n2Ppm > 450 ? 'Warning' : 'Normal');
+              const n2Online = parsed.N2_Online !== undefined ? Number(parsed.N2_Online) === 1 : true;
+              const n2Status = !n2Online ? 'Offline' : (n2Ppm > 1500 || n2Flame ? 'Danger' : (n2Ppm > 450 ? 'Warning' : 'Normal'));
               setSecondaryNodes(prev => ({
                 ...prev,
                 N2: {
@@ -389,7 +390,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             if (parsed.N3_Gas !== undefined || parsed.n3_gas !== undefined) {
               const n3Ppm = Number(parsed.N3_Gas ?? parsed.n3_gas ?? 0);
               const n3Flame = parsed.N3_Fire !== undefined ? (Number(parsed.N3_Fire) === 1 || Boolean(parsed.N3_Fire)) : false;
-              const n3Status = n3Ppm > 1500 || n3Flame ? 'Danger' : (n3Ppm > 450 ? 'Warning' : 'Normal');
+              const n3Online = parsed.N3_Online !== undefined ? Number(parsed.N3_Online) === 1 : true;
+              const n3Status = !n3Online ? 'Offline' : (n3Ppm > 1500 || n3Flame ? 'Danger' : (n3Ppm > 450 ? 'Warning' : 'Normal'));
               setSecondaryNodes(prev => ({
                 ...prev,
                 N3: {
@@ -707,10 +709,12 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           const n2GasKey = Object.keys(data).find(k => /^N2_Gas$/i.test(k));
           const n2FireKey = Object.keys(data).find(k => /^N2_Fire$/i.test(k));
+          const n2OnlineKey = Object.keys(data).find(k => /^N2_Online$/i.test(k));
           if (n2GasKey !== undefined || n2FireKey !== undefined) {
             n2Ppm = Number(data[n2GasKey || ''] ?? 0);
             n2Flame = Number(data[n2FireKey || ''] ?? 0) === 1;
-            const n2Status = n2Ppm > 1500 || n2Flame ? 'Danger' : (n2Ppm > 450 ? 'Warning' : 'Normal');
+            const n2Online = n2OnlineKey !== undefined ? Number(data[n2OnlineKey]) === 1 : true;
+            const n2Status = !n2Online ? 'Offline' : (n2Ppm > 1500 || n2Flame ? 'Danger' : (n2Ppm > 450 ? 'Warning' : 'Normal'));
             setSecondaryNodes(prev => ({
               ...prev,
               N2: {
@@ -738,10 +742,12 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // 3. Process Secondary Node 3 (N3)
           const n3GasKey = Object.keys(data).find(k => /^N3_Gas$/i.test(k));
           const n3FireKey = Object.keys(data).find(k => /^N3_Fire$/i.test(k));
+          const n3OnlineKey = Object.keys(data).find(k => /^N3_Online$/i.test(k));
           if (n3GasKey !== undefined || n3FireKey !== undefined) {
             n3Ppm = Number(data[n3GasKey || ''] ?? 0);
             n3Flame = Number(data[n3FireKey || ''] ?? 0) === 1;
-            const n3Status = n3Ppm > 1500 || n3Flame ? 'Danger' : (n3Ppm > 450 ? 'Warning' : 'Normal');
+            const n3Online = n3OnlineKey !== undefined ? Number(data[n3OnlineKey]) === 1 : true;
+            const n3Status = !n3Online ? 'Offline' : (n3Ppm > 1500 || n3Flame ? 'Danger' : (n3Ppm > 450 ? 'Warning' : 'Normal'));
             setSecondaryNodes(prev => ({
               ...prev,
               N3: {
