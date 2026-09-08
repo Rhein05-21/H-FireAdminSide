@@ -47,8 +47,6 @@ bool beepState = false;
 // --- Data Storage para sa lahat ng Nodes ---
 int nodeGas[4] = {0, 0, 0, 0};
 bool nodeFire[4] = {false, false, false, false};
-unsigned long lastNodeSeen[4] = {0, 0, 0, 0}; // Timestamp kung kailan huling nagpadala ang node
-const unsigned long NODE_TIMEOUT = 3000;      // 3 segundo: kapag walang natanggap na data, OFFLINE na
 
 typedef struct struct_message {
   int node_id;
@@ -66,7 +64,6 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   if (id == 2 || id == 3) {
     nodeGas[id] = incomingReadings.gas_level;
     nodeFire[id] = incomingReadings.flame_status;
-    lastNodeSeen[id] = millis(); // I-record ang timestamp ng huling natanggap na packet
   }
 }
 
@@ -174,18 +171,8 @@ void loop() {
   if (currentMillis - lastSensorReadTime > 500) {
     lastSensorReadTime = currentMillis;
 
-    // 1. Basahin ang sariling sensor ng Node 1
     nodeGas[1] = analogRead(MQ2_PIN);
     nodeFire[1] = (digitalRead(FLAME_PIN) == HIGH); 
-
-    // 2. I-check ang Heartbeat ng Secondary Nodes (Node 2 at 3)
-    // Kapag namatay o nawalan ng signal ng 3 segundo, i-reset sa 0 para mawala sa warning/danger
-    for (int i = 2; i <= 3; i++) {
-      if (lastNodeSeen[i] == 0 || (currentMillis - lastNodeSeen[i] > NODE_TIMEOUT)) {
-        nodeGas[i] = 0;       // I-clear ang gas level para mawala sa warning/danger
-        nodeFire[i] = false;  // I-clear ang flame status
-      }
-    }
 
     bool isDanger = false;
     bool isWarning = false;
@@ -218,30 +205,20 @@ void loop() {
       display.print(F("N")); 
       display.print(i);
       display.print(F(": "));
-
-      bool isNodeOffline = (i > 1 && (lastNodeSeen[i] == 0 || (currentMillis - lastNodeSeen[i] > NODE_TIMEOUT)));
-
-      if (isNodeOffline) {
-        display.print(F("[OFFLINE]"));
-      } else {
-        display.print(nodeGas[i]);
-        display.print(F("ppm "));
-        
-        if (nodeFire[i]) display.print(F("[FIRE!]"));
-        else if (nodeGas[i] >= DANGER_LIMIT) display.print(F("[GAS!]"));
-        else display.print(F("[OK]"));
-      }
+      display.print(nodeGas[i]);
+      display.print(F("ppm "));
+      
+      if (nodeFire[i]) display.print(F("[FIRE!]"));
+      else if (nodeGas[i] >= DANGER_LIMIT) display.print(F("[GAS!]"));
+      else display.print(F("[OK]"));
     }
     display.display();
 
     if (client.connected()) {
-      bool n2Online = (lastNodeSeen[2] > 0 && (currentMillis - lastNodeSeen[2] <= NODE_TIMEOUT));
-      bool n3Online = (lastNodeSeen[3] > 0 && (currentMillis - lastNodeSeen[3] <= NODE_TIMEOUT));
-
       String jsonPayload = "{";
       jsonPayload += "\"N1_Gas\":" + String(nodeGas[1]) + ", \"N1_Fire\":" + String(nodeFire[1]) + ", ";
-      jsonPayload += "\"N2_Gas\":" + String(nodeGas[2]) + ", \"N2_Fire\":" + String(nodeFire[2]) + ", \"N2_Online\":" + String(n2Online ? 1 : 0) + ", ";
-      jsonPayload += "\"N3_Gas\":" + String(nodeGas[3]) + ", \"N3_Fire\":" + String(nodeFire[3]) + ", \"N3_Online\":" + String(n3Online ? 1 : 0);
+      jsonPayload += "\"N2_Gas\":" + String(nodeGas[2]) + ", \"N2_Fire\":" + String(nodeFire[2]) + ", ";
+      jsonPayload += "\"N3_Gas\":" + String(nodeGas[3]) + ", \"N3_Fire\":" + String(nodeFire[3]);
       jsonPayload += "}";
       client.publish(topic_data, jsonPayload.c_str());
     }
