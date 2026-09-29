@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -15,7 +15,9 @@ import {
   Flame, 
   Layers, 
   Crosshair, 
-  ShieldAlert 
+  ShieldAlert,
+  Compass,
+  Radio
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -42,7 +44,7 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
     longitudeDelta: 0.008,
   };
 
-  const focusOnDevice = (device: DeviceRecord) => {
+  const focusOnDevice = useCallback((device: DeviceRecord) => {
     setSelectedDevice(device);
     if (mapRef.current) {
       mapRef.current.animateToRegion({
@@ -52,15 +54,36 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
         longitudeDelta: 0.003,
       }, 500);
     }
-  };
+  }, []);
 
-  const focusOnEmergency = () => {
-    const dangerDevice = devices.find(d => d.current_status === 'Danger') ||
-                         devices.find(d => d.current_status === 'Warning');
-    if (dangerDevice) {
-      focusOnDevice(dangerDevice);
+  const locateRandomDevice = useCallback(() => {
+    if (!devices || devices.length === 0) return;
+    if (devices.length === 1) {
+      focusOnDevice(devices[0]);
+      return;
     }
-  };
+    const pool = devices.filter(d => d.mac !== selectedDevice?.mac);
+    const candidates = pool.length > 0 ? pool : devices;
+    const randomIndex = Math.floor(Math.random() * candidates.length);
+    focusOnDevice(candidates[randomIndex]);
+  }, [devices, selectedDevice, focusOnDevice]);
+
+  // Synchronize and auto-select a random device on initial load
+  useEffect(() => {
+    if (devices.length === 0) {
+      setSelectedDevice(null);
+      return;
+    }
+    if (!selectedDevice) {
+      const randomIndex = Math.floor(Math.random() * devices.length);
+      focusOnDevice(devices[randomIndex]);
+    } else {
+      const fresh = devices.find(d => d.mac === selectedDevice.mac);
+      if (fresh) {
+        setSelectedDevice(fresh);
+      }
+    }
+  }, [devices]);
 
   const darkMapStyle = [
     { elementType: 'geometry', stylers: [{ color: '#1a202c' }] },
@@ -127,12 +150,12 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
       {/* Map Control Buttons */}
       <View style={styles.controlsRow}>
         <TouchableOpacity 
-          style={[styles.controlBtn, styles.emergencyFocusBtn]}
-          onPress={focusOnEmergency}
+          style={[styles.controlBtn, styles.locateBtn]}
+          onPress={locateRandomDevice}
           activeOpacity={0.8}
         >
-          <Crosshair color={COLORS.danger} size={18} style={{ marginRight: 6 }} />
-          <Text style={styles.emergencyFocusText}>Jump to Hazard</Text>
+          <Compass color={COLORS.accent} size={18} style={{ marginRight: 6 }} />
+          <Text style={styles.locateBtnText}>Locate Devices</Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
@@ -262,12 +285,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     ...SHADOWS.md,
   },
-  emergencyFocusBtn: {
-    backgroundColor: '#1E1B2E',
-    borderColor: COLORS.dangerBorder,
+  locateBtn: {
+    backgroundColor: COLORS.cardBackground,
+    borderColor: COLORS.accent,
   },
-  emergencyFocusText: {
-    color: COLORS.danger,
+  locateBtnText: {
+    color: COLORS.accent,
     fontWeight: '700',
     fontSize: 12,
   },

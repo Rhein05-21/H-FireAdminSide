@@ -101,7 +101,9 @@ CREATE POLICY "Allow authenticated insert/update on devices" ON public.devices F
 
 CREATE POLICY "Allow authenticated access to gas_logs" ON public.gas_logs FOR ALL TO authenticated USING (true);
 CREATE POLICY "Allow authenticated access to incidents" ON public.incidents FOR ALL TO authenticated USING (true);
-CREATE POLICY "Allow authenticated access to app_settings" ON public.app_settings FOR ALL TO authenticated USING (true);
+DROP POLICY IF EXISTS "Allow authenticated access to app_settings" ON public.app_settings;
+DROP POLICY IF EXISTS "Allow all access to app_settings" ON public.app_settings;
+CREATE POLICY "Allow all access to app_settings" ON public.app_settings FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
 
 -- 8. ENABLE REALTIME PUBLICATION
 ALTER PUBLICATION supabase_realtime ADD TABLE public.gas_logs;

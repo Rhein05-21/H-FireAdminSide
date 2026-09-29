@@ -88,7 +88,182 @@ async function sendPushNotification(houseName, alertType, ppm) {
   }
 }
 
-// 3. HiveMQ MQTT Client Connection
+// 3. httpSMS Automated Cellular SMS Dispatch (Live Gateway & Simulation Fallback)
+const HTTPSMS_API_URL = 'https://api.httpsms.com/v1/messages/send';
+let httpSmsApiKey = process.env.HTTPSMS_API_KEY || '';
+let httpSmsFromNumber = process.env.HTTPSMS_FROM_NUMBER || '';
+let autoSmsEnabled = process.env.AUTO_SMS_ENABLED === 'true';
+
+// Cooldown tracker: mac -> lastSentTimestamp (ms)
+const smsCooldownMap = new Map();
+const SMS_COOLDOWN_MS = 5 * 60 * 1000; // 5-minute cooldown per device MAC
+
+// Sync Auto-SMS configuration from Supabase app_settings
+async function fetchAutoSmsSettings() {
+  if (!supabaseUrl || supabaseUrl.includes('placeholder')) return;
+  try {
+    const { data: rows } = await supabase
+      .from('app_settings')
+      .select('key, value')
+      .in('key', ['auto_sms_enabled', 'httpsms_api_key', 'httpsms_from_number']);
+
+    if (rows && Array.isArray(rows)) {
+      rows.forEach(r => {
+        if (r.key === 'auto_sms_enabled') autoSmsEnabled = r.value === 'true';
+        if (r.key === 'httpsms_api_key' && r.value) httpSmsApiKey = r.value;
+        if (r.key === 'httpsms_from_number' && r.value) httpSmsFromNumber = r.value;
+      });
+    }
+  } catch (err) {
+    console.warn('⚠️ Auto-SMS settings fetch warning:', err.message);
+  }
+}
+
+fetchAutoSmsSettings();
+setInterval(fetchAutoSmsSettings, 30000);
+
+async function dispatchAutoSmsAlert({ houseName, nodeLabel, alertType, ppm, flame, profileId, mac }) {
+  try {
+    await fetchAutoSmsSettings();
+
+    if (!autoSmsEnabled) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastSent = smsCooldownMap.get(mac) || 0;
+    if (now - lastSent < SMS_COOLDOWN_MS) {
+      const remainingSecs = Math.round((SMS_COOLDOWN_MS - (now - lastSent)) / 1000);
+      console.log(`⏳ [Auto-SMS] Cooldown active for ${mac} (${remainingSecs}s remaining). Skipping duplicate SMS.`);
+      return;
+    }
+
+    const recipients = new Set();
+
+    // 1. Emergency Hotlines from app_settings
+    try {
+      const { data: hotlinesRow } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'emergency_hotlines')
+        .maybeSingle();
+
+      if (hotlinesRow?.value) {
+        const parsed = JSON.parse(hotlinesRow.value);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(h => {
+            if (h.number && (h.icon === 'flame' || h.icon === 'shield-alert' || (h.name && (h.name.toLowerCase().includes('fire') || h.name.toLowerCase().includes('guard') || h.name.toLowerCase().includes('bfp'))))) {
+              const cleaned = h.number.replace(/[^0-9+]/g, '');
+              if (cleaned.length >= 7) recipients.add(cleaned);
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Failed loading hotlines for Auto-SMS:', e.message);
+    }
+
+    // 2. Affected resident phone number from profile
+    if (profileId) {
+      try {
+        const { data: residentProfile } = await supabase
+          .from('profiles')
+          .select('emergency_hotline, phone')
+          .eq('id', profileId)
+          .maybeSingle();
+
+        const resPhone = residentProfile?.emergency_hotline || residentProfile?.phone;
+        if (resPhone) {
+          const cleaned = resPhone.replace(/[^0-9+]/g, '');
+          if (cleaned.length >= 7) recipients.add(cleaned);
+        }
+      } catch (e) {
+        console.warn('⚠️ Failed loading resident phone for Auto-SMS:', e.message);
+      }
+    }
+
+    if (recipients.size === 0) {
+      recipients.add('+639171234567'); // Default fallback target for simulation/demo
+    }
+
+    const timeStr = new Date().toLocaleTimeString('en-US', { 
+      timeZone: 'Asia/Manila', 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+
+    const smsBody = `[H-FIRE CRITICAL ALERT]\n` +
+      `HAZARD DETECTED!\n` +
+      `Household: ${houseName}\n` +
+      `Sensor: ${nodeLabel}\n` +
+      `Status: ${alertType} (${ppm} PPM, Flame: ${flame ? 'YES' : 'NO'})\n` +
+      `Time: ${timeStr}\n` +
+      `Immediate emergency response required!`;
+
+    const isLiveGateway = Boolean(httpSmsApiKey && httpSmsFromNumber);
+
+    for (const rawTo of recipients) {
+      let formattedTo = rawTo;
+      if (formattedTo.startsWith('09')) {
+        formattedTo = `+63${formattedTo.slice(1)}`;
+      } else if (!formattedTo.startsWith('+')) {
+        formattedTo = `+63${formattedTo}`;
+      }
+
+      if (isLiveGateway) {
+        try {
+          const res = await fetch(HTTPSMS_API_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': httpSmsApiKey,
+            },
+            body: JSON.stringify({
+              from: httpSmsFromNumber,
+              to: formattedTo,
+              content: smsBody,
+            }),
+          });
+
+          if (res.ok) {
+            console.log(`📡 [httpSMS LIVE] Dispatched SMS to ${formattedTo}`);
+          } else {
+            const errTxt = await res.text();
+            console.warn(`⚠️ [httpSMS LIVE] Dispatch error to ${formattedTo}:`, errTxt);
+          }
+        } catch (postErr) {
+          console.error(`❌ [httpSMS LIVE] Network error to ${formattedTo}:`, postErr.message);
+        }
+      } else {
+        console.log(`📱 [httpSMS SIMULATION] Auto-SMS simulated for ${houseName}:`);
+        console.log(`   ➡️ To: ${formattedTo}`);
+        console.log(`   📝 Message:\n${smsBody}`);
+      }
+
+      try {
+        await supabase.from('app_settings').upsert({
+          key: 'last_auto_sms',
+          value: JSON.stringify({
+            timestamp: new Date().toISOString(),
+            mode: isLiveGateway ? 'LIVE' : 'SIMULATION',
+            recipient: formattedTo,
+            alertType,
+            ppm,
+            houseName,
+            status: isLiveGateway ? 'Dispatched' : 'Simulated',
+          }),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'key' });
+      } catch (logErr) {}
+    }
+
+    smsCooldownMap.set(mac, now);
+  } catch (err) {
+    console.error('❌ Auto-SMS handler error:', err.message);
+  }
+}
+
+// 4. HiveMQ MQTT Client Connection
 if (HIVEMQ_URL) {
   const client = mqtt.connect(HIVEMQ_URL, {
     username: process.env.EXPO_PUBLIC_HIVEMQ_USERNAME,
@@ -222,11 +397,11 @@ if (HIVEMQ_URL) {
           notes: `[${nodeLabel}] ${alertType} detected at ${ppm} PPM (Flame: ${flame ? 'YES' : 'NO'}).`,
         }]);
       }
-      }
+    }
 
-      if (status === 'Danger') {
-        await sendPushNotification(houseName, alertType, ppm);
-      }
+    if (status === 'Danger') {
+      await sendPushNotification(houseName, alertType, ppm);
+      await dispatchAutoSmsAlert({ houseName, nodeLabel, alertType, ppm, flame, profileId, mac });
     }
   }
 

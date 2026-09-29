@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   View, 
   Text, 
   StyleSheet, 
   TouchableOpacity, 
   ScrollView, 
-  Linking,
+  Linking, 
   Platform,
   Dimensions
 } from 'react-native';
@@ -38,6 +38,21 @@ import {
   Cpu
 } from 'lucide-react-native';
 
+const SECTOR_LOT_POSITIONS: Array<{ top: string; left: string }> = [
+  { top: '10%', left: '6%' },
+  { top: '10%', left: '42%' },
+  { top: '22%', left: '20%' },
+  { top: '42%', left: '6%' },
+  { top: '42%', left: '42%' },
+  { top: '54%', left: '20%' },
+  { top: '10%', left: '76%' },
+  { top: '24%', left: '60%' },
+  { top: '42%', left: '76%' },
+  { top: '72%', left: '42%' },
+  { top: '72%', left: '76%' },
+  { top: '72%', left: '18%' },
+];
+
 interface CommunityMapProps {
   devices: DeviceRecord[];
   onSelectDevice?: (device: DeviceRecord) => void;
@@ -56,6 +71,9 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
   const [filter, setFilter] = useState<'all' | 'hazard' | 'online'>('all');
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingDevice, setEditingDevice] = useState<DeviceRecord | null>(null);
+  const [isAutoTour, setIsAutoTour] = useState(false);
+
+  const chipsScrollRef = useRef<ScrollView | null>(null);
 
   const totalCount = devices.length;
   const dangerCount = devices.filter(d => d.current_status === 'Danger').length;
@@ -68,20 +86,68 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
     return true;
   });
 
-  const focusOnDevice = (device: DeviceRecord) => {
+  const focusOnDevice = useCallback((device: DeviceRecord, notifyParent: boolean = true) => {
     setSelectedDevice(device);
-    onSelectDevice?.(device);
-  };
-
-  const focusOnEmergency = () => {
-    const dangerDevice = devices.find(d => d.current_status === 'Danger') ||
-                         devices.find(d => d.current_status === 'Warning');
-    if (dangerDevice) {
-      focusOnDevice(dangerDevice);
-    } else if (devices.length > 0) {
-      focusOnDevice(devices[0]);
+    if (notifyParent) {
+      onSelectDevice?.(device);
     }
-  };
+    // Auto-scroll the horizontal chips carousel to the focused device
+    const targetIdx = filteredDevices.findIndex(d => d.mac === device.mac);
+    if (targetIdx >= 0 && chipsScrollRef.current) {
+      chipsScrollRef.current.scrollTo({
+        x: Math.max(0, targetIdx * 230 - 30),
+        animated: true,
+      });
+    }
+  }, [filteredDevices, onSelectDevice]);
+
+  // Synchronize and auto-select a random device on initial load or update
+  useEffect(() => {
+    if (devices.length === 0) {
+      setSelectedDevice(null);
+      return;
+    }
+    if (!selectedDevice) {
+      const randomIndex = Math.floor(Math.random() * devices.length);
+      focusOnDevice(devices[randomIndex], false);
+    } else {
+      const fresh = devices.find(d => d.mac === selectedDevice.mac);
+      if (fresh) {
+        setSelectedDevice(fresh);
+      } else {
+        const randomIndex = Math.floor(Math.random() * devices.length);
+        focusOnDevice(devices[randomIndex], false);
+      }
+    }
+  }, [devices]);
+
+  // Locate random device handler: jumps to a random device (different from current)
+  const locateRandomDevice = useCallback((fromAuto: boolean = false) => {
+    const candidateList = filteredDevices.length > 0 ? filteredDevices : devices;
+    if (!candidateList || candidateList.length === 0) return;
+
+    let targetDevice: DeviceRecord;
+    if (candidateList.length === 1) {
+      targetDevice = candidateList[0];
+    } else {
+      // Pick a random device different from the currently selected one
+      const pool = candidateList.filter(d => d.mac !== selectedDevice?.mac);
+      const candidates = pool.length > 0 ? pool : candidateList;
+      const randomIndex = Math.floor(Math.random() * candidates.length);
+      targetDevice = candidates[randomIndex];
+    }
+
+    focusOnDevice(targetDevice, !fromAuto);
+  }, [devices, filteredDevices, selectedDevice, focusOnDevice]);
+
+  // Automatic cycle / tour through random devices
+  useEffect(() => {
+    if (!isAutoTour) return;
+    const interval = setInterval(() => {
+      locateRandomDevice(true);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [isAutoTour, locateRandomDevice]);
 
   const openGoogleMaps = (lat?: number, lng?: number) => {
     const latitude = lat || 14.1777;
@@ -106,23 +172,37 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Top Header with Hazard Summary */}
+      {/* Top Header with Hazard Summary & Device Locator */}
       <View style={styles.header}>
         <View style={styles.headerTitleCol}>
           <Text style={styles.title}>COMMUNITY SAFETY MAP</Text>
           <Text style={styles.subtitle}>Subdivision Sector & GPS Hazard Visualizer</Text>
         </View>
 
-        <TouchableOpacity 
-          style={[styles.emergencyFocusBtn, dangerCount > 0 && styles.emergencyFocusBtnActive]}
-          onPress={focusOnEmergency}
-          activeOpacity={0.8}
-        >
-          <Crosshair color={dangerCount > 0 ? COLORS.danger : COLORS.accent} size={15} style={{ marginRight: 6 }} />
-          <Text style={[styles.emergencyFocusText, dangerCount > 0 && { color: COLORS.danger }]}>
-            {dangerCount > 0 ? 'Jump to Hazard' : 'Recenter Map'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.headerActionsRow}>
+          <TouchableOpacity 
+            style={styles.locateBtn}
+            onPress={() => {
+              setIsAutoTour(false);
+              locateRandomDevice(false);
+            }}
+            activeOpacity={0.8}
+          >
+            <Compass color={COLORS.accent} size={15} style={{ marginRight: 6 }} />
+            <Text style={styles.locateBtnText}>Locate Devices</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.autoTourBtn, isAutoTour && styles.autoTourBtnActive]}
+            onPress={() => setIsAutoTour(prev => !prev)}
+            activeOpacity={0.8}
+          >
+            <Radio color={isAutoTour ? COLORS.primary : COLORS.textMuted} size={13} style={{ marginRight: 4 }} />
+            <Text style={[styles.autoTourBtnText, isAutoTour && styles.autoTourBtnTextActive]}>
+              {isAutoTour ? 'Auto: ON' : 'Auto'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Metrics & Filter Pills */}
@@ -188,25 +268,29 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
               const statusTheme = getStatusColor(device.current_status || 'Normal');
               const isDanger = device.current_status === 'Danger';
               
-              const topPos = 45 + (idx * 75);
-              const leftPos = 30 + (idx * 55);
+              const lotPos = SECTOR_LOT_POSITIONS[idx % SECTOR_LOT_POSITIONS.length];
+              const topPos = lotPos.top;
+              const leftPos = lotPos.left;
 
               return (
                 <TouchableOpacity
                   key={device.mac}
                   style={[
                     styles.mapPinContainer,
-                    { top: topPos, left: leftPos },
+                    { top: topPos as any, left: leftPos as any },
                     isSelected && styles.mapPinSelected,
                   ]}
-                  onPress={() => focusOnDevice(device)}
+                  onPress={() => {
+                    setIsAutoTour(false);
+                    focusOnDevice(device, true);
+                  }}
                   activeOpacity={0.8}
                 >
                   {/* Pin Callout Card */}
                   <View style={[
                     styles.pinCalloutCard, 
                     { borderColor: statusTheme.color, backgroundColor: COLORS.cardBackground },
-                    isSelected && { borderColor: COLORS.primary, backgroundColor: '#131D31' },
+                    isSelected && { borderColor: COLORS.accent, backgroundColor: '#131D31' },
                     isDanger && styles.pinDangerGlow
                   ]}>
                     <View style={styles.pinCalloutTop}>
@@ -218,6 +302,11 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
                       <Text style={[styles.pinHouseText, isSelected && { color: COLORS.white }]} numberOfLines={1}>
                         {device.house_name}
                       </Text>
+                      {isSelected && (
+                        <View style={styles.locatedBadge}>
+                          <Text style={styles.locatedBadgeText}>LOCATED</Text>
+                        </View>
+                      )}
                     </View>
 
                     {/* N1, N2, N3 Channels Pill Row */}
@@ -241,8 +330,12 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
                   </View>
 
                   {/* Pin Point Needle */}
-                  <View style={[styles.pinNeedle, { backgroundColor: isSelected ? COLORS.primary : statusTheme.color }]} />
-                  <View style={[styles.pinDot, { backgroundColor: statusTheme.color }]} />
+                  <View style={[styles.pinNeedle, { backgroundColor: isSelected ? COLORS.accent : statusTheme.color }]} />
+                  <View style={[
+                    styles.pinDot, 
+                    { backgroundColor: statusTheme.color },
+                    isSelected && styles.pinDotSelected
+                  ]} />
                 </TouchableOpacity>
               );
             })}
@@ -252,6 +345,7 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
 
       {/* Nodes List Carousel */}
       <ScrollView 
+        ref={chipsScrollRef}
         horizontal 
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.chipsScroll}
@@ -266,11 +360,14 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
               key={device.mac}
               style={[
                 styles.nodeChip,
-                { borderColor: isSelected ? COLORS.primary : statusTheme.border },
+                { borderColor: isSelected ? COLORS.accent : statusTheme.border },
                 isSelected && styles.nodeChipSelected,
                 isDanger && styles.nodeChipDanger
               ]}
-              onPress={() => focusOnDevice(device)}
+              onPress={() => {
+                setIsAutoTour(false);
+                focusOnDevice(device, true);
+              }}
               activeOpacity={0.8}
             >
               <View style={[styles.chipIconBg, { backgroundColor: statusTheme.bg }]}>
@@ -447,24 +544,49 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
-  emergencyFocusBtn: {
+  headerActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  locateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.cardBackground,
+    borderWidth: 1.5,
+    borderColor: COLORS.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    ...SHADOWS.sm,
+  },
+  locateBtnText: {
+    color: COLORS.accent,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  autoTourBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.cardBackground,
     borderWidth: 1,
-    borderColor: COLORS.cardBorder,
+    borderColor: COLORS.cardBorderSubtle,
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 8,
   },
-  emergencyFocusBtnActive: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-    borderColor: COLORS.danger,
+  autoTourBtnActive: {
+    backgroundColor: COLORS.primaryMuted,
+    borderColor: COLORS.primary,
   },
-  emergencyFocusText: {
-    color: COLORS.accent,
+  autoTourBtnText: {
+    color: COLORS.textMuted,
     fontSize: 11,
     fontWeight: '700',
+  },
+  autoTourBtnTextActive: {
+    color: COLORS.white,
   },
   summaryBar: {
     flexDirection: 'row',
@@ -597,7 +719,8 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   mapPinSelected: {
-    zIndex: 20,
+    zIndex: 30,
+    transform: [{ scale: 1.05 }],
   },
   pinCalloutCard: {
     borderWidth: 1.5,
@@ -622,6 +745,21 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     flex: 1,
   },
+  locatedBadge: {
+    backgroundColor: 'rgba(14, 165, 233, 0.2)',
+    borderColor: COLORS.accent,
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    marginLeft: 4,
+  },
+  locatedBadgeText: {
+    color: COLORS.accent,
+    fontSize: 7.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
   pinChannelsRow: {
     flexDirection: 'row',
     gap: 3,
@@ -643,6 +781,14 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
+  },
+  pinDotSelected: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.white,
   },
   chipsScroll: {
     gap: SPACING.sm,

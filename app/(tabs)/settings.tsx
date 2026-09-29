@@ -11,7 +11,8 @@ import {
   ActivityIndicator, 
   Platform,
   TextInput,
-  KeyboardAvoidingView
+  KeyboardAvoidingView,
+  Switch
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useAuth, UserRole } from '../../context/AuthContext';
@@ -46,7 +47,11 @@ import {
   ShieldAlert,
   Activity,
   Building,
-  RotateCcw
+  RotateCcw,
+  MessageSquare,
+  Smartphone,
+  Send,
+  Info
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 
@@ -59,11 +64,26 @@ export default function SettingsScreen() {
     saveHotline, 
     deleteHotline, 
     resetHotlinesToDefault,
-    profiles 
+    profiles,
+    isAutoSmsEnabled,
+    httpSmsApiKey,
+    httpSmsFromNumber,
+    lastAutoSms,
+    toggleAutoSms,
+    saveHttpSmsConfig,
+    sendTestSms
   } = useAdmin();
   const [pushStatus, setPushStatus] = useState<string>('Ready');
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // httpSMS Gateway & Auto-SMS Modal State
+  const [httpSmsModalVisible, setHttpSmsModalVisible] = useState(false);
+  const [inputSmsApiKey, setInputSmsApiKey] = useState('');
+  const [inputSmsFromNumber, setInputSmsFromNumber] = useState('');
+  const [testSmsTarget, setTestSmsTarget] = useState('');
+  const [isTestingSms, setIsTestingSms] = useState(false);
+  const [isSavingSmsConfig, setIsSavingSmsConfig] = useState(false);
 
   // Admin Officer Registration Modal State
   const [registerModalVisible, setRegisterModalVisible] = useState(false);
@@ -82,6 +102,64 @@ export default function SettingsScreen() {
   // Hotline Edit / Add Modal State
   const [hotlineModalVisible, setHotlineModalVisible] = useState(false);
   const [selectedHotline, setSelectedHotline] = useState<EmergencyHotline | null>(null);
+
+  const handleToggleAutoSms = async (val: boolean) => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+    const res = await toggleAutoSms(val);
+    if (!res.success && res.error) {
+      Alert.alert('Settings Error', res.error);
+    }
+  };
+
+  const handleOpenHttpSmsModal = () => {
+    setInputSmsApiKey(httpSmsApiKey || '');
+    setInputSmsFromNumber(httpSmsFromNumber || '');
+    setTestSmsTarget('');
+    setHttpSmsModalVisible(true);
+  };
+
+  const handleSaveHttpSms = async () => {
+    setIsSavingSmsConfig(true);
+    try {
+      const res = await saveHttpSmsConfig(inputSmsApiKey.trim(), inputSmsFromNumber.trim());
+      if (res.success) {
+        Alert.alert('Configuration Saved', 'httpSMS gateway settings have been updated successfully.');
+        setHttpSmsModalVisible(false);
+      } else {
+        Alert.alert('Save Failed', res.error || 'Unable to update configuration');
+      }
+    } finally {
+      setIsSavingSmsConfig(false);
+    }
+  };
+
+  const handleSendTestSms = async () => {
+    const trimmed = testSmsTarget.trim();
+    if (!trimmed) {
+      Alert.alert('Input Required', 'Please enter a target mobile number (e.g. 09171234567).');
+      return;
+    }
+    setIsTestingSms(true);
+    try {
+      const res = await sendTestSms(trimmed);
+      if (res.success) {
+        if (res.simulated) {
+          Alert.alert(
+            'Simulation Dispatched', 
+            `Test SMS simulated to ${trimmed}.\n\nSafe Simulation Mode: Logged to database and console without requiring external SMS credits!`
+          );
+        } else {
+          Alert.alert('SMS Dispatched', `Test emergency SMS sent to ${trimmed} via httpSMS Android Gateway!`);
+        }
+      } else {
+        Alert.alert('Dispatch Error', res.error || 'Failed to dispatch SMS');
+      }
+    } finally {
+      setIsTestingSms(false);
+    }
+  };
 
   const handleOpenLogout = () => {
     if (Platform.OS !== 'web') {
@@ -318,6 +396,75 @@ export default function SettingsScreen() {
             </View>
             <Text style={styles.actionLinkText}>{pushStatus}</Text>
           </TouchableOpacity>
+
+          <View style={styles.divider} />
+
+          <View style={styles.settingsRow}>
+            <View style={styles.settingIconCol}>
+              <MessageSquare color={COLORS.primary} size={20} />
+            </View>
+            <View style={styles.settingTextCol}>
+              <Text style={styles.settingTitle}>Auto-SMS on Critical Emergency</Text>
+              <Text style={styles.settingSub}>
+                Automatically dispatches emergency SMS to BFP, Guards & Residents
+              </Text>
+            </View>
+            <Switch
+              value={isAutoSmsEnabled}
+              onValueChange={handleToggleAutoSms}
+              trackColor={{ false: COLORS.cardBorder, true: COLORS.primary }}
+              thumbColor={COLORS.white}
+            />
+          </View>
+
+          {role === 'admin' && (
+            <>
+              <View style={styles.divider} />
+              <TouchableOpacity 
+                style={styles.settingsRow} 
+                onPress={handleOpenHttpSmsModal}
+                activeOpacity={0.75}
+              >
+                <View style={styles.settingIconCol}>
+                  <Smartphone color={COLORS.accent} size={20} />
+                </View>
+                <View style={styles.settingTextCol}>
+                  <Text style={styles.settingTitle}>httpSMS Gateway & Tester</Text>
+                  <Text style={styles.settingSub}>
+                    {httpSmsFromNumber ? `From: ${httpSmsFromNumber}` : 'Simulation Mode (Free / Zero Budget)'}
+                  </Text>
+                </View>
+                <View style={[styles.statusPill, { backgroundColor: isAutoSmsEnabled ? (httpSmsApiKey ? COLORS.normalBg : COLORS.warningBg) : COLORS.cardBackground }]}>
+                  <Text style={[styles.statusPillText, { color: isAutoSmsEnabled ? (httpSmsApiKey ? COLORS.normal : COLORS.warning) : COLORS.textMuted }]}>
+                    {isAutoSmsEnabled ? (httpSmsApiKey ? 'LIVE' : 'SIMULATED') : 'OFF'}
+                  </Text>
+                </View>
+                <ChevronRight color={COLORS.textMuted} size={18} />
+              </TouchableOpacity>
+            </>
+          )}
+
+          {lastAutoSms && (
+            <>
+              <View style={styles.divider} />
+              <View style={styles.settingsRow}>
+                <View style={styles.settingIconCol}>
+                  <Send color={COLORS.textMuted} size={18} />
+                </View>
+                <View style={styles.settingTextCol}>
+                  <Text style={styles.settingTitle}>Last SMS Dispatch</Text>
+                  <Text style={styles.settingSub}>
+                    {lastAutoSms.mode === 'LIVE' ? '🟢 Live GSM' : '🟡 Simulated'}: {lastAutoSms.recipient} • {new Date(lastAutoSms.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                </View>
+                <View style={[styles.statusPill, { backgroundColor: lastAutoSms.mode === 'LIVE' ? COLORS.normalBg : COLORS.warningBg }]}>
+                  <Text style={[styles.statusPillText, { color: lastAutoSms.mode === 'LIVE' ? COLORS.normal : COLORS.warning }]}>
+                    {lastAutoSms.status?.toUpperCase() || 'SENT'}
+                  </Text>
+                </View>
+              </View>
+            </>
+          )}
         </View>
 
         {/* 3. Testing Tools (Dev Mode Only - Expo Go Only) */}
@@ -726,6 +873,160 @@ export default function SettingsScreen() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* httpSMS Cellular Gateway & Auto-SMS Modal */}
+      <Modal
+        visible={httpSmsModalVisible}
+        transparent={true}
+        animationType="fade"
+        statusBarTranslucent={true}
+        onRequestClose={() => setHttpSmsModalVisible(false)}
+      >
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalBackdrop}
+        >
+          <View style={[styles.modalContainer, { maxWidth: 440, maxHeight: '90%' }]}>
+            <TouchableOpacity 
+              style={styles.modalCloseBtn}
+              onPress={() => setHttpSmsModalVisible(false)}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.7}
+            >
+              <X color={COLORS.textMuted} size={18} />
+            </TouchableOpacity>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 10 }}>
+              {/* Header Icon */}
+              <View style={styles.modalIconRing}>
+                <View style={[styles.modalIconBg, { backgroundColor: COLORS.primaryMuted }]}>
+                  <Smartphone color={COLORS.primary} size={24} />
+                </View>
+              </View>
+
+              <Text style={styles.modalTitle}>httpSMS Gateway Settings</Text>
+              <Text style={styles.modalMessage}>
+                Connect an Android phone to send real SMS alerts via cellular carrier, or leave empty to use Free Simulation Mode.
+              </Text>
+
+              {/* Status Banner */}
+              <View style={[
+                styles.regRoleDescCard, 
+                { 
+                  borderColor: (httpSmsApiKey && httpSmsFromNumber) ? COLORS.normalBorder : COLORS.warningBorder,
+                  backgroundColor: (httpSmsApiKey && httpSmsFromNumber) ? COLORS.normalBg : COLORS.warningBg,
+                  marginBottom: SPACING.md
+                }
+              ]}>
+                <Text style={[
+                  styles.regRoleDescTitle, 
+                  { color: (httpSmsApiKey && httpSmsFromNumber) ? COLORS.normal : COLORS.warning }
+                ]}>
+                  {(httpSmsApiKey && httpSmsFromNumber) ? '🟢 LIVE GATEWAY CONNECTED' : '🟡 SAFE SIMULATION MODE (₱0)'}
+                </Text>
+                <Text style={styles.regRoleDescBody}>
+                  {(httpSmsApiKey && httpSmsFromNumber)
+                    ? `Physical Android device registered (${httpSmsFromNumber}). Emergency hazards will dispatch physical cellular SMS.`
+                    : 'Zero budget required. During tests and defense presentations, hazards trigger simulated SMS logs in the backend without requiring phone SIM or credits.'}
+                </Text>
+              </View>
+
+              {/* Configuration Inputs */}
+              <View style={styles.regInputGroup}>
+                <Text style={styles.regInputLabel}>HTTPSMS API KEY (OPTIONAL)</Text>
+                <View style={styles.regInputWrapper}>
+                  <Lock color={COLORS.textMuted} size={16} style={styles.regInputIcon} />
+                  <TextInput
+                    style={styles.regTextInput}
+                    placeholder="e.g. key_live_abc123... (from httpsms.com)"
+                    placeholderTextColor={COLORS.textMuted}
+                    value={inputSmsApiKey}
+                    onChangeText={setInputSmsApiKey}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.regInputGroup}>
+                <Text style={styles.regInputLabel}>GATEWAY SENDER PHONE NUMBER</Text>
+                <View style={styles.regInputWrapper}>
+                  <PhoneCall color={COLORS.textMuted} size={16} style={styles.regInputIcon} />
+                  <TextInput
+                    style={styles.regTextInput}
+                    placeholder="e.g. +639171234567"
+                    placeholderTextColor={COLORS.textMuted}
+                    value={inputSmsFromNumber}
+                    onChangeText={setInputSmsFromNumber}
+                    keyboardType="phone-pad"
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+
+              {/* Save Configuration Button */}
+              <TouchableOpacity
+                style={[styles.modalConfirmBtn, { backgroundColor: COLORS.primary, width: '100%', marginBottom: SPACING.lg }]}
+                onPress={handleSaveHttpSms}
+                disabled={isSavingSmsConfig}
+                activeOpacity={0.8}
+              >
+                {isSavingSmsConfig ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <>
+                    <CheckCircle2 color={COLORS.white} size={16} style={{ marginRight: 6 }} />
+                    <Text style={styles.modalConfirmBtnText}>Save Gateway Configuration</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              {/* Test SMS Dispatcher */}
+              <Text style={styles.sectionHeader}>DISPATCH TEST SMS (LIVE OR SIMULATED)</Text>
+              <View style={styles.regInputGroup}>
+                <Text style={styles.regInputLabel}>TARGET TEST PHONE NUMBER</Text>
+                <View style={styles.regInputWrapper}>
+                  <Send color={COLORS.textMuted} size={16} style={styles.regInputIcon} />
+                  <TextInput
+                    style={styles.regTextInput}
+                    placeholder="e.g. 09171234567"
+                    placeholderTextColor={COLORS.textMuted}
+                    value={testSmsTarget}
+                    onChangeText={setTestSmsTarget}
+                    keyboardType="phone-pad"
+                  />
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.modalConfirmBtn, { backgroundColor: '#1E1B2E', borderWidth: 1, borderColor: COLORS.primary, width: '100%', marginBottom: SPACING.md }]}
+                onPress={handleSendTestSms}
+                disabled={isTestingSms}
+                activeOpacity={0.8}
+              >
+                {isTestingSms ? (
+                  <ActivityIndicator color={COLORS.primary} size="small" />
+                ) : (
+                  <>
+                    <Send color={COLORS.primary} size={16} style={{ marginRight: 6 }} />
+                    <Text style={[styles.modalConfirmBtnText, { color: COLORS.primary }]}>Send Test SMS Alert</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <View style={styles.modalActionsRow}>
+                <TouchableOpacity 
+                  style={[styles.modalCancelBtn, { width: '100%' }]}
+                  onPress={() => setHttpSmsModalVisible(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.modalCancelBtnText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

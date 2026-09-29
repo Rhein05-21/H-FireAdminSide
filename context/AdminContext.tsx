@@ -72,6 +72,20 @@ interface AdminContextType {
   updateDeviceConfig: (mac: string, label: string, profileId: string | null) => Promise<{ success: boolean; error?: string }>;
   unassignDevice: (mac: string) => Promise<{ success: boolean; error?: string }>;
   updateUserRole: (userId: string, newRole: any) => Promise<{ success: boolean; error?: string }>;
+  isAutoSmsEnabled: boolean;
+  httpSmsApiKey: string;
+  httpSmsFromNumber: string;
+  lastAutoSms: {
+    timestamp: string;
+    mode: 'LIVE' | 'SIMULATION';
+    recipient: string;
+    alertType?: string;
+    status: string;
+    houseName?: string;
+  } | null;
+  toggleAutoSms: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+  saveHttpSmsConfig: (apiKey: string, fromNumber: string) => Promise<{ success: boolean; error?: string }>;
+  sendTestSms: (toNumber: string) => Promise<{ success: boolean; simulated?: boolean; error?: string }>;
   saveHotline: (hotline: EmergencyHotline) => Promise<void>;
   deleteHotline: (id: string) => Promise<void>;
   resetHotlinesToDefault: () => Promise<void>;
@@ -113,8 +127,19 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isSirenPlaying, setIsSirenPlaying] = useState(false);
   const [isSimulatorVisible, setSimulatorVisible] = useState(false);
   const [bridgeHeartbeat, setBridgeHeartbeat] = useState<string | null>(new Date().toISOString());
+  const [isAutoSmsEnabled, setIsAutoSmsEnabled] = useState<boolean>(false);
+  const [httpSmsApiKey, setHttpSmsApiKey] = useState<string>('');
+  const [httpSmsFromNumber, setHttpSmsFromNumber] = useState<string>('');
+  const [lastAutoSms, setLastAutoSms] = useState<{
+    timestamp: string;
+    mode: 'LIVE' | 'SIMULATION';
+    recipient: string;
+    alertType?: string;
+    status: string;
+    houseName?: string;
+  } | null>(null);
 
-  // Load cached emergency hotlines from local storage
+  // Load cached emergency hotlines and Auto-SMS settings from local storage
   useEffect(() => {
     AsyncStorage.getItem('hfire_emergency_hotlines').then(val => {
       if (val) {
@@ -125,6 +150,18 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         } catch {}
       }
+    }).catch(() => {});
+
+    AsyncStorage.getItem('hfire_auto_sms_enabled').then(val => {
+      if (val !== null) setIsAutoSmsEnabled(val === 'true');
+    }).catch(() => {});
+
+    AsyncStorage.getItem('hfire_httpsms_from_number').then(val => {
+      if (val) setHttpSmsFromNumber(val);
+    }).catch(() => {});
+
+    AsyncStorage.getItem('hfire_httpsms_api_key').then(val => {
+      if (val) setHttpSmsApiKey(val);
     }).catch(() => {});
   }, []);
 
@@ -480,6 +517,20 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               setHotlines(parsed);
               AsyncStorage.setItem('hfire_emergency_hotlines', s.value).catch(() => {});
             }
+          } catch {}
+        } else if (s.key === 'auto_sms_enabled') {
+          const isEnabled = s.value === 'true';
+          setIsAutoSmsEnabled(isEnabled);
+          AsyncStorage.setItem('hfire_auto_sms_enabled', s.value).catch(() => {});
+        } else if (s.key === 'httpsms_from_number') {
+          setHttpSmsFromNumber(s.value);
+          AsyncStorage.setItem('hfire_httpsms_from_number', s.value).catch(() => {});
+        } else if (s.key === 'httpsms_api_key') {
+          setHttpSmsApiKey(s.value);
+          AsyncStorage.setItem('hfire_httpsms_api_key', s.value).catch(() => {});
+        } else if (s.key === 'last_auto_sms') {
+          try {
+            setLastAutoSms(JSON.parse(s.value));
           } catch {}
         }
       });
@@ -1381,6 +1432,126 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const toggleAutoSms = async (enabled: boolean): Promise<{ success: boolean; error?: string }> => {
+    setIsAutoSmsEnabled(enabled);
+    await AsyncStorage.setItem('hfire_auto_sms_enabled', enabled ? 'true' : 'false').catch(() => {});
+
+    if (isSupabaseConfigured) {
+      try {
+        const { error } = await supabase.from('app_settings').upsert({
+          key: 'auto_sms_enabled',
+          value: enabled ? 'true' : 'false',
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'key' });
+
+        if (error) throw error;
+        return { success: true };
+      } catch (err: any) {
+        console.warn('Failed to update auto_sms_enabled in Supabase:', err);
+        return { success: false, error: err.message || 'Failed to update database' };
+      }
+    }
+    return { success: true };
+  };
+
+  const saveHttpSmsConfig = async (apiKey: string, fromNumber: string): Promise<{ success: boolean; error?: string }> => {
+    setHttpSmsApiKey(apiKey);
+    setHttpSmsFromNumber(fromNumber);
+    await AsyncStorage.setItem('hfire_httpsms_api_key', apiKey).catch(() => {});
+    await AsyncStorage.setItem('hfire_httpsms_from_number', fromNumber).catch(() => {});
+
+    if (isSupabaseConfigured) {
+      try {
+        await supabase.from('app_settings').upsert([
+          { key: 'httpsms_api_key', value: apiKey, updated_at: new Date().toISOString() },
+          { key: 'httpsms_from_number', value: fromNumber, updated_at: new Date().toISOString() },
+        ], { onConflict: 'key' });
+        return { success: true };
+      } catch (err: any) {
+        console.warn('Failed to save httpSMS configuration in Supabase:', err);
+        return { success: false, error: err.message || 'Failed to update database' };
+      }
+    }
+    return { success: true };
+  };
+
+  const sendTestSms = async (toNumber: string): Promise<{ success: boolean; simulated?: boolean; error?: string }> => {
+    let cleanTo = toNumber.replace(/[^0-9+]/g, '');
+    if (cleanTo.startsWith('09')) {
+      cleanTo = `+63${cleanTo.slice(1)}`;
+    } else if (!cleanTo.startsWith('+')) {
+      cleanTo = `+63${cleanTo}`;
+    }
+
+    const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const content = `[H-FIRE TEST ALERT]\n` +
+      `System: H-Fire Admin Monitoring Center\n` +
+      `Status: Emergency Dispatch Test Verified\n` +
+      `Time: ${timeStr}\n` +
+      `Auto-SMS Gateway connection operational!`;
+
+    const isLive = Boolean(httpSmsApiKey && httpSmsFromNumber);
+
+    if (isLive) {
+      try {
+        const response = await fetch('https://api.httpsms.com/v1/messages/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': httpSmsApiKey,
+          },
+          body: JSON.stringify({
+            from: httpSmsFromNumber,
+            to: cleanTo,
+            content,
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          return { success: false, error: `httpSMS error: ${errText}` };
+        }
+
+        const logEntry = {
+          timestamp: new Date().toISOString(),
+          mode: 'LIVE' as const,
+          recipient: cleanTo,
+          alertType: 'TEST ALERT',
+          status: 'Dispatched',
+        };
+        setLastAutoSms(logEntry);
+        if (isSupabaseConfigured) {
+          await supabase.from('app_settings').upsert({
+            key: 'last_auto_sms',
+            value: JSON.stringify(logEntry),
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'key' });
+        }
+
+        return { success: true, simulated: false };
+      } catch (err: any) {
+        return { success: false, error: err.message || 'Network request failed' };
+      }
+    } else {
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        mode: 'SIMULATION' as const,
+        recipient: cleanTo,
+        alertType: 'TEST ALERT (SIMULATED)',
+        status: 'Simulated',
+      };
+      setLastAutoSms(logEntry);
+      if (isSupabaseConfigured) {
+        await supabase.from('app_settings').upsert({
+          key: 'last_auto_sms',
+          value: JSON.stringify(logEntry),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'key' });
+      }
+      return { success: true, simulated: true };
+    }
+  };
+
   return (
     <AdminContext.Provider
       value={{
@@ -1395,6 +1566,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isSirenPlaying,
         isSimulatorVisible,
         bridgeHeartbeat,
+        isAutoSmsEnabled,
+        httpSmsApiKey,
+        httpSmsFromNumber,
+        lastAutoSms,
+        toggleAutoSms,
+        saveHttpSmsConfig,
+        sendTestSms,
         refreshData,
         resolveIncident,
         dispatchEmergencyResponse,
