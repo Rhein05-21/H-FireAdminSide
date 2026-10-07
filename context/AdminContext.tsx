@@ -682,10 +682,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     refreshData();
 
-    // 1.5-second periodic poll to guarantee immediate realtime synchronization
+    // 60-second gentle fallback poll (saves Disk I/O budget; live updates arrive via WebSocket Broadcast)
     const pollInterval = setInterval(() => {
       refreshData();
-    }, 1500);
+    }, 60000);
 
     // Direct HiveMQ WebSocket Connection for 0ms Live Telemetry
     let mqttClient: any = null;
@@ -884,28 +884,71 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     const channel = supabase
-      .channel('admin_live_feed')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, (payload) => {
-        const row = payload.new as any;
-        if (row?.key && row.key.startsWith('telemetry_')) {
-          try {
-            const parsed = JSON.parse(row.value);
-            const mac = parsed.mac?.toUpperCase();
-            if (mac) {
-              setDevices(prev => prev.map(d => {
-                if (d.mac === mac) {
-                  return {
-                    ...d,
-                    current_ppm: Number(parsed.ppm ?? 0),
-                    flame: Boolean(parsed.flame),
-                    current_status: parsed.status || 'Normal',
-                    last_seen: parsed.timestamp || row.updated_at || new Date().toISOString(),
-                  };
-                }
-                return d;
-              }));
+      .channel('telemetry-feed')
+      // 1. Supabase Realtime Broadcast: In-Memory WebSockets (Zero Disk I/O)
+      .on('broadcast', { event: 'telemetry' }, ({ payload }: { payload: any }) => {
+        if (!payload) return;
+        const mac = String(payload.mac || '').toUpperCase();
+        const ppm = Number(payload.ppm ?? 0);
+        const flame = Boolean(payload.flame);
+        const status = payload.status || (ppm > 1500 || flame ? 'Danger' : (ppm > 450 ? 'Warning' : 'Normal'));
+
+        latestTelemetryMapRef.current[mac] = {
+          ppm,
+          flame,
+          status: status as GasStatus,
+          timestamp: Date.now(),
+        };
+
+        setDevices(prev => prev.map(d => {
+          if (d.mac === mac) {
+            return {
+              ...d,
+              current_ppm: ppm,
+              flame,
+              current_status: status as GasStatus,
+              last_seen: payload.timestamp || new Date().toISOString(),
+            };
+          }
+          return d;
+        }));
+
+        // Handle Secondary Nodes N2 and N3 if broadcasted
+        if (payload.N2_Gas !== undefined || payload.n2_gas !== undefined) {
+          const n2Ppm = Number(payload.N2_Gas ?? payload.n2_gas ?? 0);
+          const n2Flame = Boolean(Number(payload.N2_Fire ?? payload.n2_fire ?? 0) === 1 || payload.N2_Fire === true);
+          const n2Status = n2Ppm > 1500 || n2Flame ? 'Danger' : (n2Ppm > 450 ? 'Warning' : 'Normal');
+          setSecondaryNodes(prev => ({
+            ...prev,
+            N2: {
+              ...prev.N2,
+              ppm: n2Ppm,
+              flame: n2Flame,
+              status: n2Status,
+              last_seen: payload.timestamp || new Date().toISOString(),
             }
-          } catch {}
+          }));
+        }
+
+        if (payload.N3_Gas !== undefined || payload.n3_gas !== undefined) {
+          const n3Ppm = Number(payload.N3_Gas ?? payload.n3_gas ?? 0);
+          const n3Flame = Boolean(Number(payload.N3_Fire ?? payload.n3_fire ?? 0) === 1 || payload.N3_Fire === true);
+          const n3Status = n3Ppm > 1500 || n3Flame ? 'Danger' : (n3Ppm > 450 ? 'Warning' : 'Normal');
+          setSecondaryNodes(prev => ({
+            ...prev,
+            N3: {
+              ...prev.N3,
+              ppm: n3Ppm,
+              flame: n3Flame,
+              status: n3Status,
+              last_seen: payload.timestamp || new Date().toISOString(),
+            }
+          }));
+        }
+      })
+      .on('broadcast', { event: 'heartbeat' }, ({ payload }: { payload: any }) => {
+        if (payload?.timestamp) {
+          setBridgeHeartbeat(payload.timestamp);
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, () => {
