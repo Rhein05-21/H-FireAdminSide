@@ -6,7 +6,7 @@ import {
   TouchableOpacity, 
   Platform 
 } from 'react-native';
-import MapView, { Marker, Callout } from 'react-native-maps';
+import MapView, { Marker, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import { DeviceRecord } from '../utils/supabase';
 import { COLORS, SPACING, SHADOWS } from '../constants/theme';
 import { getStatusColor } from '../constants/thresholds';
@@ -38,10 +38,10 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
   const mapRef = useRef<MapView | null>(null);
 
   const initialRegion = {
-    latitude: 14.6000,
-    longitude: 120.9845,
-    latitudeDelta: 0.008,
-    longitudeDelta: 0.008,
+    latitude: devices[0]?.latitude || 14.1777,
+    longitude: devices[0]?.longitude || 121.2551,
+    latitudeDelta: 0.006,
+    longitudeDelta: 0.006,
   };
 
   const focusOnDevice = useCallback((device: DeviceRecord) => {
@@ -98,6 +98,7 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
   return (
     <View style={styles.container}>
       <MapView
+        provider={PROVIDER_GOOGLE}
         ref={mapRef}
         style={styles.map}
         initialRegion={initialRegion}

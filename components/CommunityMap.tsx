@@ -72,6 +72,8 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingDevice, setEditingDevice] = useState<DeviceRecord | null>(null);
   const [isAutoTour, setIsAutoTour] = useState(false);
+  const [viewMode, setViewMode] = useState<'googleMaps' | 'blueprint'>('googleMaps');
+  const [mapLayer, setMapLayer] = useState<'satellite' | 'roadmap'>('satellite');
 
   const chipsScrollRef = useRef<ScrollView | null>(null);
 
@@ -239,108 +241,171 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
             Safe ({normalCount})
           </Text>
         </TouchableOpacity>
+
+        {/* View Mode Toggle: Google Map vs Blueprint */}
+        <View style={styles.viewModeToggleRow}>
+          <TouchableOpacity
+            style={[styles.viewModeBtn, viewMode === 'googleMaps' && styles.viewModeBtnActive]}
+            onPress={() => setViewMode('googleMaps')}
+            activeOpacity={0.8}
+          >
+            <Compass color={viewMode === 'googleMaps' ? COLORS.white : COLORS.accent} size={12} style={{ marginRight: 4 }} />
+            <Text style={[styles.viewModeBtnText, viewMode === 'googleMaps' && styles.viewModeBtnTextActive]}>
+              Google Map
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.viewModeBtn, viewMode === 'blueprint' && styles.viewModeBtnActive]}
+            onPress={() => setViewMode('blueprint')}
+            activeOpacity={0.8}
+          >
+            <Layers color={viewMode === 'blueprint' ? COLORS.white : COLORS.textMuted} size={12} style={{ marginRight: 4 }} />
+            <Text style={[styles.viewModeBtnText, viewMode === 'blueprint' && styles.viewModeBtnTextActive]}>
+              Blueprint
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Interactive Map Visual Canvas (Sector Grid & Markers) */}
+      {/* Interactive Map Visual Canvas (Google Maps or Sector Blueprint) */}
       <View style={styles.mapCanvasContainer}>
-        {/* Sector Blueprint Grid Background */}
-        <View style={styles.sectorBlueprint}>
-          <View style={styles.sectorPerimeter}>
-            {/* Street Lines */}
-            <View style={styles.blueprintStreetH1} />
-            <View style={styles.blueprintStreetH2} />
-            <View style={styles.blueprintStreetV1} />
-            <View style={styles.blueprintStreetV2} />
+        {viewMode === 'googleMaps' && Platform.OS === 'web' ? (
+          <View style={styles.webGoogleMapWrapper}>
+            {/* Real Interactive Google Maps Satellite / Streets view */}
+            {React.createElement('iframe', {
+              key: `${selectedDevice?.mac || 'default'}-${mapLayer}`,
+              src: `https://maps.google.com/maps?q=${selectedDevice?.latitude || 14.1777},${selectedDevice?.longitude || 121.2551}&t=${mapLayer === 'satellite' ? 'k' : 'm'}&z=18&ie=UTF8&iwloc=&output=embed`,
+              style: {
+                width: '100%',
+                height: '100%',
+                border: 'none',
+              },
+              title: "Google Satellite Map",
+              loading: "lazy",
+            })}
 
-            {/* Sector Labels */}
-            <Text style={styles.sectorLabelTopLeft}>SECTOR A (MAIN GATED RESIDENCES)</Text>
-            <Text style={styles.sectorLabelBottomRight}>SECTOR B (PERIMETER & ACCESS)</Text>
-
-            {/* Subdivision Guard Gate Indicator */}
-            <View style={styles.guardGateMarker}>
-              <ShieldAlert color={COLORS.accent} size={12} style={{ marginRight: 4 }} />
-              <Text style={styles.guardGateText}>MAIN GUARD GATE</Text>
+            {/* Floating Satellite / Road toggle on top-right of map */}
+            <View style={styles.mapFloatingLayerControls}>
+              <TouchableOpacity
+                style={[styles.layerTogglePill, mapLayer === 'satellite' && styles.layerTogglePillActive]}
+                onPress={() => setMapLayer(mapLayer === 'satellite' ? 'roadmap' : 'satellite')}
+                activeOpacity={0.8}
+              >
+                <Layers color={COLORS.white} size={12} style={{ marginRight: 4 }} />
+                <Text style={styles.layerTogglePillText}>
+                  {mapLayer === 'satellite' ? 'Satellite' : 'Roads'}
+                </Text>
+              </TouchableOpacity>
             </View>
 
-            {/* Visual Interactive Device Pins on Map with N1, N2, N3 readings */}
-            {filteredDevices.map((device, idx) => {
-              const isSelected = selectedDevice?.mac === device.mac;
-              const statusTheme = getStatusColor(device.current_status || 'Normal');
-              const isDanger = device.current_status === 'Danger';
-              
-              const lotPos = SECTOR_LOT_POSITIONS[idx % SECTOR_LOT_POSITIONS.length];
-              const topPos = lotPos.top;
-              const leftPos = lotPos.left;
-
-              return (
-                <TouchableOpacity
-                  key={device.mac}
-                  style={[
-                    styles.mapPinContainer,
-                    { top: topPos as any, left: leftPos as any },
-                    isSelected && styles.mapPinSelected,
-                  ]}
-                  onPress={() => {
-                    setIsAutoTour(false);
-                    focusOnDevice(device, true);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  {/* Pin Callout Card */}
-                  <View style={[
-                    styles.pinCalloutCard, 
-                    { borderColor: statusTheme.color, backgroundColor: COLORS.cardBackground },
-                    isSelected && { borderColor: COLORS.accent, backgroundColor: '#131D31' },
-                    isDanger && styles.pinDangerGlow
-                  ]}>
-                    <View style={styles.pinCalloutTop}>
-                      {device.flame ? (
-                        <Flame color={COLORS.danger} size={13} style={{ marginRight: 4 }} />
-                      ) : (
-                        <Home color={statusTheme.color} size={13} style={{ marginRight: 4 }} />
-                      )}
-                      <Text style={[styles.pinHouseText, isSelected && { color: COLORS.white }]} numberOfLines={1}>
-                        {device.house_name}
-                      </Text>
-                      {isSelected && (
-                        <View style={styles.locatedBadge}>
-                          <Text style={styles.locatedBadgeText}>LOCATED</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    {/* N1, N2, N3 Channels Pill Row */}
-                    <View style={styles.pinChannelsRow}>
-                      <View style={[styles.channelPill, { backgroundColor: statusTheme.bg }]}>
-                        <Text style={[styles.channelPillText, { color: statusTheme.color }]}>
-                          N1:{device.current_ppm ?? 0}
-                        </Text>
-                      </View>
-                      <View style={[styles.channelPill, { backgroundColor: n2Theme.bg }]}>
-                        <Text style={[styles.channelPillText, { color: n2Theme.color }]}>
-                          N2:{secondaryNodes.N2.ppm ?? 0}
-                        </Text>
-                      </View>
-                      <View style={[styles.channelPill, { backgroundColor: n3Theme.bg }]}>
-                        <Text style={[styles.channelPillText, { color: n3Theme.color }]}>
-                          N3:{secondaryNodes.N3.ppm ?? 0}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Pin Point Needle */}
-                  <View style={[styles.pinNeedle, { backgroundColor: isSelected ? COLORS.accent : statusTheme.color }]} />
-                  <View style={[
-                    styles.pinDot, 
-                    { backgroundColor: statusTheme.color },
-                    isSelected && styles.pinDotSelected
-                  ]} />
-                </TouchableOpacity>
-              );
-            })}
+            {/* Bottom floating GPS info badge */}
+            <View style={styles.mapFloatingCoordBadge}>
+              <Text style={styles.mapFloatingCoordText}>
+                📍 {selectedDevice?.house_name || 'Community Node'} • Lat {(selectedDevice?.latitude || 14.1777).toFixed(4)}, Lng {(selectedDevice?.longitude || 121.2551).toFixed(4)}
+              </Text>
+            </View>
           </View>
-        </View>
+        ) : (
+          /* Sector Blueprint Grid Background */
+          <View style={styles.sectorBlueprint}>
+            <View style={styles.sectorPerimeter}>
+              {/* Street Lines */}
+              <View style={styles.blueprintStreetH1} />
+              <View style={styles.blueprintStreetH2} />
+              <View style={styles.blueprintStreetV1} />
+              <View style={styles.blueprintStreetV2} />
+
+              {/* Sector Labels */}
+              <Text style={styles.sectorLabelTopLeft}>SECTOR A (MAIN GATED RESIDENCES)</Text>
+              <Text style={styles.sectorLabelBottomRight}>SECTOR B (PERIMETER & ACCESS)</Text>
+
+              {/* Subdivision Guard Gate Indicator */}
+              <View style={styles.guardGateMarker}>
+                <ShieldAlert color={COLORS.accent} size={12} style={{ marginRight: 4 }} />
+                <Text style={styles.guardGateText}>MAIN GUARD GATE</Text>
+              </View>
+
+              {/* Visual Interactive Device Pins on Map with N1, N2, N3 readings */}
+              {filteredDevices.map((device, idx) => {
+                const isSelected = selectedDevice?.mac === device.mac;
+                const statusTheme = getStatusColor(device.current_status || 'Normal');
+                const isDanger = device.current_status === 'Danger';
+                
+                const lotPos = SECTOR_LOT_POSITIONS[idx % SECTOR_LOT_POSITIONS.length];
+                const topPos = lotPos.top;
+                const leftPos = lotPos.left;
+
+                return (
+                  <TouchableOpacity
+                    key={device.mac}
+                    style={[
+                      styles.mapPinContainer,
+                      { top: topPos as any, left: leftPos as any },
+                      isSelected && styles.mapPinSelected,
+                    ]}
+                    onPress={() => {
+                      setIsAutoTour(false);
+                      focusOnDevice(device, true);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    {/* Pin Callout Card */}
+                    <View style={[
+                      styles.pinCalloutCard, 
+                      { borderColor: statusTheme.color, backgroundColor: COLORS.cardBackground },
+                      isSelected && { borderColor: COLORS.accent, backgroundColor: '#131D31' },
+                      isDanger && styles.pinDangerGlow
+                    ]}>
+                      <View style={styles.pinCalloutTop}>
+                        {device.flame ? (
+                          <Flame color={COLORS.danger} size={13} style={{ marginRight: 4 }} />
+                        ) : (
+                          <Home color={statusTheme.color} size={13} style={{ marginRight: 4 }} />
+                        )}
+                        <Text style={[styles.pinHouseText, isSelected && { color: COLORS.white }]} numberOfLines={1}>
+                          {device.house_name}
+                        </Text>
+                        {isSelected && (
+                          <View style={styles.locatedBadge}>
+                            <Text style={styles.locatedBadgeText}>LOCATED</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* N1, N2, N3 Channels Pill Row */}
+                      <View style={styles.pinChannelsRow}>
+                        <View style={[styles.channelPill, { backgroundColor: statusTheme.bg }]}>
+                          <Text style={[styles.channelPillText, { color: statusTheme.color }]}>
+                            N1:{device.current_ppm ?? 0}
+                          </Text>
+                        </View>
+                        <View style={[styles.channelPill, { backgroundColor: n2Theme.bg }]}>
+                          <Text style={[styles.channelPillText, { color: n2Theme.color }]}>
+                            N2:{secondaryNodes.N2.ppm ?? 0}
+                          </Text>
+                        </View>
+                        <View style={[styles.channelPill, { backgroundColor: n3Theme.bg }]}>
+                          <Text style={[styles.channelPillText, { color: n3Theme.color }]}>
+                            N3:{secondaryNodes.N3.ppm ?? 0}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Pin Point Needle */}
+                    <View style={[styles.pinNeedle, { backgroundColor: isSelected ? COLORS.accent : statusTheme.color }]} />
+                    <View style={[
+                      styles.pinDot, 
+                      { backgroundColor: statusTheme.color },
+                      isSelected && styles.pinDotSelected
+                    ]} />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Nodes List Carousel */}
@@ -590,6 +655,8 @@ const styles = StyleSheet.create({
   },
   summaryBar: {
     flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: SPACING.sm,
     marginBottom: SPACING.md,
   },
@@ -623,6 +690,35 @@ const styles = StyleSheet.create({
   filterPillTextActive: {
     color: COLORS.white,
   },
+  viewModeToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginLeft: 'auto',
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    padding: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorderSubtle,
+  },
+  viewModeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  viewModeBtnActive: {
+    backgroundColor: COLORS.primary,
+  },
+  viewModeBtnText: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  viewModeBtnTextActive: {
+    color: COLORS.white,
+  },
   mapCanvasContainer: {
     flex: 1,
     backgroundColor: '#0F172A',
@@ -631,7 +727,58 @@ const styles = StyleSheet.create({
     borderColor: COLORS.cardBorder,
     overflow: 'hidden',
     marginBottom: SPACING.md,
+    minHeight: 320,
     ...SHADOWS.md,
+  },
+  webGoogleMapWrapper: {
+    flex: 1,
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: 16,
+    width: '100%',
+    minHeight: 320,
+  },
+  mapFloatingLayerControls: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 10,
+  },
+  layerTogglePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    ...SHADOWS.sm,
+  },
+  layerTogglePillActive: {
+    borderColor: COLORS.accent,
+  },
+  layerTogglePillText: {
+    color: COLORS.white,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  mapFloatingCoordBadge: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    zIndex: 10,
+  },
+  mapFloatingCoordText: {
+    color: COLORS.white,
+    fontSize: 11,
+    fontWeight: '600',
   },
   sectorBlueprint: {
     flex: 1,
