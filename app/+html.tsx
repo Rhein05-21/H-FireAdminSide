@@ -9,7 +9,10 @@ export default function Root({ children }: PropsWithChildren) {
       <head>
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+        <meta 
+          name="viewport" 
+          content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" 
+        />
 
         {/* Apple iOS PWA Fullscreen Meta Tags */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -26,6 +29,36 @@ export default function Root({ children }: PropsWithChildren) {
         <link rel="manifest" href="/manifest.json" />
 
         <ScrollViewStyleReset />
+
+        {/* iOS Native Safe Area Insets & Momentum Touch Scrolling */}
+        <style dangerouslySetInnerHTML={{ __html: `
+          :root {
+            --sat: env(safe-area-inset-top, 0px);
+            --sab: env(safe-area-inset-bottom, 0px);
+            --sal: env(safe-area-inset-left, 0px);
+            --sar: env(safe-area-inset-right, 0px);
+          }
+
+          html, body, #root {
+            height: 100%;
+            width: 100%;
+            background-color: #0B0F19;
+            margin: 0;
+            padding: 0;
+            -webkit-text-size-adjust: 100%;
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior-y: none;
+          }
+
+          body {
+            padding-top: env(safe-area-inset-top, 0px);
+            padding-bottom: env(safe-area-inset-bottom, 0px);
+            padding-left: env(safe-area-inset-left, 0px);
+            padding-right: env(safe-area-inset-right, 0px);
+            box-sizing: border-box;
+            -webkit-overflow-scrolling: touch;
+          }
+        `}} />
       </head>
       <body style={{ backgroundColor: '#0B0F19', margin: 0, padding: 0 }}>
         {children}

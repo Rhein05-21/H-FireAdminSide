@@ -98,11 +98,11 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
   return (
     <View style={styles.container}>
       <MapView
-        provider={PROVIDER_GOOGLE}
+        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
         ref={mapRef}
         style={styles.map}
         initialRegion={initialRegion}
-        customMapStyle={darkMapStyle}
+        customMapStyle={Platform.OS === 'android' ? darkMapStyle : undefined}
         mapType={mapType}
         showsUserLocation={true}
         showsCompass={true}

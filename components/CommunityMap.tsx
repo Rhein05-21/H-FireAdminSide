@@ -173,7 +173,11 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
   const n3Theme = getStatusColor(secondaryNodes?.N3?.status || 'Normal');
 
   return (
-    <View style={styles.container}>
+    <ScrollView 
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={true}
+    >
       {/* Top Header with Hazard Summary & Device Locator */}
       <View style={styles.header}>
         <View style={styles.headerTitleCol}>
@@ -578,7 +582,7 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
           setEditingDevice(null);
         }}
       />
-    </View>
+    </ScrollView>
   );
 };
 
@@ -586,7 +590,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  scrollContent: {
     padding: SPACING.lg,
+    paddingBottom: 120,
   },
   header: {
     flexDirection: 'row',
@@ -720,23 +727,21 @@ const styles = StyleSheet.create({
     color: COLORS.white,
   },
   mapCanvasContainer: {
-    flex: 1,
+    height: 420,
     backgroundColor: '#0F172A',
     borderRadius: 18,
     borderWidth: 1.5,
     borderColor: COLORS.cardBorder,
     overflow: 'hidden',
     marginBottom: SPACING.md,
-    minHeight: 320,
     ...SHADOWS.md,
   },
   webGoogleMapWrapper: {
-    flex: 1,
+    width: '100%',
+    height: '100%',
     position: 'relative',
     overflow: 'hidden',
     borderRadius: 16,
-    width: '100%',
-    minHeight: 320,
   },
   mapFloatingLayerControls: {
     position: 'absolute',

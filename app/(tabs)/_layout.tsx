@@ -11,9 +11,12 @@ export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const activeCount = incidents.filter(i => i.status === 'Active').length;
 
-  // Dynamically calculate bottom padding for both Android (3-button / gesture) & iPhone (Home indicator)
-  const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 8 : 12);
-  const tabHeight = 54 + bottomPadding;
+  // Dynamically calculate bottom padding for Android, iPhone (Home indicator & legacy), & Web
+  const isWeb = Platform.OS === 'web';
+  const bottomPadding = isWeb 
+    ? 12 
+    : Math.max(insets.bottom, Platform.OS === 'android' ? 8 : 20);
+  const tabHeight = (isWeb ? 58 : 52) + bottomPadding;
 
   return (
     <Tabs
