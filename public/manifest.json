@@ -1,0 +1,22 @@
+{
+  "short_name": "H-Fire Admin",
+  "name": "H-Fire Admin Monitoring System",
+  "icons": [
+    {
+      "src": "/h-fire_logo.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/h-fire_logo.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0B0F19",
+  "theme_color": "#0B0F19",
+  "display": "standalone",
+  "orientation": "portrait",
+  "scope": "/"
+}

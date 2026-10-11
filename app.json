@@ -43,7 +43,13 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/h-fire_logo.png"
+      "favicon": "./assets/h-fire_logo.png",
+      "name": "H-Fire Admin",
+      "shortName": "H-Fire Admin",
+      "themeColor": "#0B0F19",
+      "backgroundColor": "#0B0F19",
+      "display": "standalone",
+      "orientation": "portrait"
     },
     "plugins": [
       "expo-router",
