@@ -62,7 +62,12 @@ export default function LoginScreen() {
       if (error) {
         setErrorMsg(error.message);
         const raw = (error.message || '').toLowerCase();
-        if (raw.includes('invalid login credentials') || raw.includes('invalid') || raw.includes('wrong') || raw.includes('credentials')) {
+        if (raw.includes('access denied') || raw.includes('resident')) {
+          triggerErrorModal(
+            'Access Denied (Resident Account)',
+            'This account is registered as a Subdivision Resident. Resident accounts cannot access the H-Fire Admin Command Center.\n\nPlease open the H-Fire Resident Mobile App to access your household monitoring.'
+          );
+        } else if (raw.includes('invalid login credentials') || raw.includes('invalid') || raw.includes('wrong') || raw.includes('credentials')) {
           triggerErrorModal(
             'Incorrect Password or Email',
             'The password or email address you entered is incorrect. Please check your credentials and try again.'

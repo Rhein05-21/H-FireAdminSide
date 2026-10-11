@@ -43,6 +43,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .maybeSingle();
 
       if (!error && data) {
+        // Strict role check: If user is registered as a resident and not an officer, revoke session
+        const isOfficer = data.is_admin === true || data.role === 'admin' || data.role === 'hoa' || data.role === 'guard';
+        if (data.role === 'resident' && !isOfficer) {
+          console.warn('[AuthContext] Resident account detected in Admin app. Revoking session.');
+          await supabase.auth.signOut();
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          return;
+        }
+
         setProfile(data as ProfileRecord);
         const resolvedRole = (data.role === 'hoa' || data.role === 'guard') ? data.role : 'admin';
         setRole(resolvedRole as UserRole);
@@ -129,7 +140,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (error) return { error };
 
       if (data.user) {
-        await fetchProfile(data.user.id);
+        // Query profile to verify user role
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .maybeSingle();
+
+        const isOfficer = profileData && (
+          profileData.is_admin === true || 
+          profileData.role === 'admin' || 
+          profileData.role === 'hoa' || 
+          profileData.role === 'guard'
+        );
+
+        // Strict role check: Block resident accounts
+        if (profileData && profileData.role === 'resident' && !isOfficer) {
+          await supabase.auth.signOut();
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          return {
+            error: new Error(
+              'Access Denied: Resident accounts cannot access the H-Fire Admin Command Center. Please use the H-Fire Resident Mobile App.'
+            ),
+          };
+        }
+
+        if (profileData) {
+          setProfile(profileData as ProfileRecord);
+          const resolvedRole = (profileData.role === 'hoa' || profileData.role === 'guard') ? profileData.role : 'admin';
+          setRole(resolvedRole as UserRole);
+        } else {
+          await fetchProfile(data.user.id);
+        }
+
         await registerPushToken();
       }
       return { error: null };
