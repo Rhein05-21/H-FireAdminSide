@@ -4,6 +4,7 @@ import {
   Text, 
   StyleSheet, 
   TouchableOpacity, 
+  ScrollView,
   Platform 
 } from 'react-native';
 import MapView, { Marker, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -17,7 +18,12 @@ import {
   Crosshair, 
   ShieldAlert,
   Compass,
-  Radio
+  Radio,
+  ChevronDown,
+  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  Check
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -37,6 +43,16 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
   const insets = useSafeAreaInsets();
   const [selectedDevice, setSelectedDevice] = useState<DeviceRecord | null>(null);
   const [mapType, setMapType] = useState<'standard' | 'satellite'>('standard');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [dropdownPage, setDropdownPage] = useState(1);
+  const DROPDOWN_PAGE_SIZE = 5;
+
+  const totalPages = Math.max(1, Math.ceil(devices.length / DROPDOWN_PAGE_SIZE));
+  const paginatedDevices = devices.slice(
+    (dropdownPage - 1) * DROPDOWN_PAGE_SIZE,
+    dropdownPage * DROPDOWN_PAGE_SIZE
+  );
+
   const mapRef = useRef<MapView | null>(null);
 
   const initialRegion = {
@@ -179,17 +195,118 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
         })}
       </MapView>
 
-      {/* Map Control Buttons */}
-      <View style={styles.controlsRow}>
-        <TouchableOpacity 
-          style={[styles.controlBtn, styles.locateBtn]}
-          onPress={locateHouseholdNode}
+      {/* Floating Device Selector Dropdown with Pagination */}
+      <View style={[styles.nativeDropdownContainer, { top: Math.max(insets.top, 16) + 8 }]}>
+        <TouchableOpacity
+          style={[styles.nativeDropdownTrigger, dropdownOpen && styles.nativeDropdownTriggerActive]}
+          onPress={() => setDropdownOpen(prev => !prev)}
           activeOpacity={0.8}
         >
-          <Compass color={COLORS.accent} size={18} style={{ marginRight: 6 }} />
-          <Text style={styles.locateBtnText}>Locate Node</Text>
+          <View style={[styles.triggerIconBg, { backgroundColor: getStatusColor(selectedDevice?.current_status || 'Normal').bg }]}>
+            {selectedDevice?.flame ? (
+              <Flame color={COLORS.danger} size={14} />
+            ) : (
+              <Home color={getStatusColor(selectedDevice?.current_status || 'Normal').color} size={14} />
+            )}
+          </View>
+
+          <View style={{ flex: 1, marginRight: 6 }}>
+            <Text style={styles.triggerHouseText} numberOfLines={1}>
+              {selectedDevice?.house_name || 'Select a Device'}
+            </Text>
+            <Text style={styles.triggerSubText} numberOfLines={1}>
+              {selectedDevice ? `${selectedDevice.label} • ${selectedDevice.current_ppm ?? 0} PPM` : 'Tap to choose node'}
+            </Text>
+          </View>
+
+          <View style={styles.chevronWrap}>
+            {dropdownOpen ? (
+              <ChevronUp color={COLORS.accent} size={16} />
+            ) : (
+              <ChevronDown color={COLORS.textMuted} size={16} />
+            )}
+          </View>
         </TouchableOpacity>
 
+        {dropdownOpen && (
+          <View style={styles.nativeDropdownPanel}>
+            <ScrollView
+              style={styles.nativeDropdownScrollList}
+              nestedScrollEnabled={true}
+              showsVerticalScrollIndicator={true}
+            >
+              {paginatedDevices.map((device) => {
+                const isSelected = selectedDevice?.mac === device.mac;
+                const statusTheme = getStatusColor(device.current_status || 'Normal');
+
+                return (
+                  <TouchableOpacity
+                    key={device.mac}
+                    style={[styles.dropdownItem, isSelected && styles.dropdownItemSelected]}
+                    onPress={() => {
+                      focusOnDevice(device);
+                      setDropdownOpen(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.itemIconBg, { backgroundColor: statusTheme.bg }]}>
+                      {device.flame ? (
+                        <Flame color={COLORS.danger} size={12} />
+                      ) : (
+                        <Home color={statusTheme.color} size={12} />
+                      )}
+                    </View>
+
+                    <View style={styles.itemTextCol}>
+                      <Text style={[styles.itemHouseName, isSelected && { color: COLORS.accent }]} numberOfLines={1}>
+                        {device.house_name}
+                      </Text>
+                      <Text style={styles.itemDetailsSub} numberOfLines={1}>
+                        {device.label} • {device.block_lot || 'Unit'}
+                      </Text>
+                    </View>
+
+                    <View style={[styles.itemPpmBadge, { backgroundColor: statusTheme.bg, borderColor: statusTheme.border }]}>
+                      <Text style={[styles.itemPpmText, { color: statusTheme.color }]}>
+                        {device.current_ppm ?? 0} PPM
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.paginationBar}>
+              <TouchableOpacity
+                style={[styles.pageBtn, dropdownPage <= 1 && styles.pageBtnDisabled]}
+                onPress={() => setDropdownPage(p => Math.max(1, p - 1))}
+                disabled={dropdownPage <= 1}
+                activeOpacity={0.7}
+              >
+                <ChevronLeft color={dropdownPage <= 1 ? COLORS.textMuted : COLORS.white} size={12} />
+                <Text style={[styles.pageBtnText, dropdownPage <= 1 && styles.pageBtnTextDisabled]}>Prev</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.pageInfoText}>
+                Page {dropdownPage}/{totalPages} ({devices.length} total)
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.pageBtn, dropdownPage >= totalPages && styles.pageBtnDisabled]}
+                onPress={() => setDropdownPage(p => Math.min(totalPages, p + 1))}
+                disabled={dropdownPage >= totalPages}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.pageBtnText, dropdownPage >= totalPages && styles.pageBtnTextDisabled]}>Next</Text>
+                <ChevronRight color={dropdownPage >= totalPages ? COLORS.textMuted : COLORS.white} size={12} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* Map Control Buttons */}
+      <View style={[styles.controlsRow, { top: Math.max(insets.top, 16) + 8 }]}>
         <TouchableOpacity 
           style={styles.controlBtn}
           onPress={() => setMapType(prev => prev === 'standard' ? 'satellite' : 'standard')}
@@ -317,14 +434,139 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     ...SHADOWS.md,
   },
-  locateBtn: {
-    backgroundColor: COLORS.cardBackground,
+  nativeDropdownContainer: {
+    position: 'absolute',
+    left: SPACING.md,
+    right: 76,
+    zIndex: 99,
+  },
+  nativeDropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    borderWidth: 1.5,
+    borderColor: COLORS.cardBorderSubtle,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    ...SHADOWS.md,
+  },
+  nativeDropdownTriggerActive: {
     borderColor: COLORS.accent,
   },
-  locateBtnText: {
-    color: COLORS.accent,
-    fontWeight: '700',
+  triggerIconBg: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  triggerHouseText: {
+    color: COLORS.white,
     fontSize: 12,
+    fontWeight: '700',
+  },
+  triggerSubText: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    marginTop: 1,
+  },
+  chevronWrap: {
+    paddingLeft: 2,
+  },
+  nativeDropdownPanel: {
+    marginTop: 6,
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.cardBorder,
+    padding: 8,
+    ...SHADOWS.lg,
+  },
+  nativeDropdownScrollList: {
+    maxHeight: 180,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#131D31',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 5,
+  },
+  dropdownItemSelected: {
+    borderColor: COLORS.accent,
+    backgroundColor: '#1E2D4A',
+  },
+  itemIconBg: {
+    width: 22,
+    height: 22,
+    borderRadius: 5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 6,
+  },
+  itemTextCol: {
+    flex: 1,
+    marginRight: 6,
+  },
+  itemHouseName: {
+    color: COLORS.white,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  itemDetailsSub: {
+    color: COLORS.textMuted,
+    fontSize: 9,
+    marginTop: 1,
+  },
+  itemPpmBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 5,
+    borderWidth: 1,
+  },
+  itemPpmText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  paginationBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  pageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 5,
+    gap: 2,
+  },
+  pageBtnDisabled: {
+    opacity: 0.35,
+  },
+  pageBtnText: {
+    color: COLORS.white,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  pageBtnTextDisabled: {
+    color: COLORS.textMuted,
+  },
+  pageInfoText: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
   },
   inspectorCard: {
     position: 'absolute',

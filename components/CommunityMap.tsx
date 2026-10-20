@@ -26,7 +26,11 @@ import {
   Navigation, 
   Edit3, 
   PhoneCall, 
-  ChevronRight, 
+  ChevronRight,
+  ChevronLeft,
+  ChevronDown,
+  ChevronUp,
+  Check, 
   Layers, 
   Wifi, 
   WifiOff, 
@@ -79,6 +83,10 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
 
   const chipsScrollRef = useRef<ScrollView | null>(null);
 
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [dropdownPage, setDropdownPage] = useState(1);
+  const DROPDOWN_PAGE_SIZE = 5;
+
   const totalCount = devices.length;
   const dangerCount = devices.filter(d => d.current_status === 'Danger').length;
   const warningCount = devices.filter(d => d.current_status === 'Warning').length;
@@ -89,6 +97,16 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
     if (filter === 'online') return d.current_status !== 'Offline';
     return true;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filteredDevices.length / DROPDOWN_PAGE_SIZE));
+  const paginatedDevices = filteredDevices.slice(
+    (dropdownPage - 1) * DROPDOWN_PAGE_SIZE,
+    dropdownPage * DROPDOWN_PAGE_SIZE
+  );
+
+  useEffect(() => {
+    setDropdownPage(1);
+  }, [filter]);
 
   const focusOnDevice = useCallback((device: DeviceRecord, notifyParent: boolean = true) => {
     setSelectedDevice(device);
@@ -203,7 +221,7 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={true}
     >
-      {/* Top Header with Hazard Summary & Device Locator */}
+      {/* Top Header with Hazard Summary */}
       <View style={styles.header}>
         <View style={styles.headerTitleCol}>
           <Text style={styles.title}>COMMUNITY SAFETY MAP</Text>
@@ -212,28 +230,154 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
 
         <View style={styles.headerActionsRow}>
           <TouchableOpacity 
-            style={styles.locateBtn}
-            onPress={() => {
-              setIsAutoTour(false);
-              locateHouseholdNode();
-            }}
-            activeOpacity={0.8}
-          >
-            <Compass color={COLORS.accent} size={15} style={{ marginRight: 6 }} />
-            <Text style={styles.locateBtnText}>Locate Node</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
             style={[styles.autoTourBtn, isAutoTour && styles.autoTourBtnActive]}
             onPress={() => setIsAutoTour(prev => !prev)}
             activeOpacity={0.8}
           >
             <Radio color={isAutoTour ? COLORS.primary : COLORS.textMuted} size={13} style={{ marginRight: 4 }} />
             <Text style={[styles.autoTourBtnText, isAutoTour && styles.autoTourBtnTextActive]}>
-              {isAutoTour ? 'Auto: ON' : 'Auto'}
+              {isAutoTour ? 'Auto Tour: ON' : 'Auto Tour'}
             </Text>
           </TouchableOpacity>
         </View>
+      </View>
+
+      {/* Device Selection Dropdown with Pagination & Scroller */}
+      <View style={styles.dropdownSection}>
+        <View style={styles.dropdownHeaderRow}>
+          <Text style={styles.dropdownSectionLabel}>SELECT DEVICE TO SHOW:</Text>
+          <Text style={styles.dropdownSectionHint}>
+            {filteredDevices.length} node{filteredDevices.length === 1 ? '' : 's'} available
+          </Text>
+        </View>
+
+        {/* Dropdown Trigger */}
+        <TouchableOpacity 
+          style={[styles.dropdownTrigger, dropdownOpen && styles.dropdownTriggerActive]}
+          onPress={() => setDropdownOpen(prev => !prev)}
+          activeOpacity={0.8}
+        >
+          <View style={[styles.triggerIconBg, { backgroundColor: activeTheme.bg }]}>
+            {selectedDevice?.flame ? (
+              <Flame color={COLORS.danger} size={16} />
+            ) : (
+              <Home color={activeTheme.color} size={16} />
+            )}
+          </View>
+
+          <View style={styles.triggerInfoCol}>
+            <Text style={styles.triggerHouseText} numberOfLines={1}>
+              {selectedDevice?.house_name || 'Select a Device'}
+            </Text>
+            <Text style={styles.triggerSubText} numberOfLines={1}>
+              {selectedDevice ? `${selectedDevice.label} • ${selectedDevice.block_lot || 'Block 1 Lot 1'}` : 'Tap to choose node'}
+            </Text>
+          </View>
+
+          <View style={[styles.triggerStatusBadge, { backgroundColor: activeTheme.bg, borderColor: activeTheme.border }]}>
+            <Text style={[styles.triggerStatusText, { color: activeTheme.color }]}>
+              {activeTheme.badgeText} ({selectedDevice?.current_ppm ?? 0} PPM)
+            </Text>
+          </View>
+
+          <View style={styles.chevronWrap}>
+            {dropdownOpen ? (
+              <ChevronUp color={COLORS.accent} size={18} />
+            ) : (
+              <ChevronDown color={COLORS.textMuted} size={18} />
+            )}
+          </View>
+        </TouchableOpacity>
+
+        {/* Dropdown Panel with Scroller & Pagination (prevents unlimited scrolling) */}
+        {dropdownOpen && (
+          <View style={styles.dropdownPanel}>
+            <ScrollView 
+              style={styles.dropdownScrollList} 
+              nestedScrollEnabled={true}
+              showsVerticalScrollIndicator={true}
+            >
+              {paginatedDevices.map((device) => {
+                const isSelected = selectedDevice?.mac === device.mac;
+                const statusTheme = getStatusColor(device.current_status || 'Normal');
+
+                return (
+                  <TouchableOpacity
+                    key={device.mac}
+                    style={[
+                      styles.dropdownItem,
+                      isSelected && styles.dropdownItemSelected
+                    ]}
+                    onPress={() => {
+                      setIsAutoTour(false);
+                      focusOnDevice(device, true);
+                      setDropdownOpen(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.itemIconBg, { backgroundColor: statusTheme.bg }]}>
+                      {device.flame ? (
+                        <Flame color={COLORS.danger} size={14} />
+                      ) : (
+                        <Home color={statusTheme.color} size={14} />
+                      )}
+                    </View>
+
+                    <View style={styles.itemTextCol}>
+                      <View style={styles.itemNameRow}>
+                        <Text style={[styles.itemHouseName, isSelected && { color: COLORS.accent }]} numberOfLines={1}>
+                          {device.house_name}
+                        </Text>
+                        {isSelected && (
+                          <View style={styles.itemSelectedBadge}>
+                            <Check color={COLORS.white} size={10} style={{ marginRight: 2 }} />
+                            <Text style={styles.itemSelectedBadgeText}>SHOWING</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.itemDetailsSub} numberOfLines={1}>
+                        {device.label} • {device.block_lot || 'Block 1 Lot 1'}
+                      </Text>
+                    </View>
+
+                    <View style={[styles.itemPpmBadge, { backgroundColor: statusTheme.bg, borderColor: statusTheme.border }]}>
+                      <Text style={[styles.itemPpmText, { color: statusTheme.color }]}>
+                        {device.current_ppm ?? 0} PPM
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {/* Pagination Controls */}
+            <View style={styles.paginationBar}>
+              <TouchableOpacity
+                style={[styles.pageBtn, dropdownPage <= 1 && styles.pageBtnDisabled]}
+                onPress={() => setDropdownPage(p => Math.max(1, p - 1))}
+                disabled={dropdownPage <= 1}
+                activeOpacity={0.7}
+              >
+                <ChevronLeft color={dropdownPage <= 1 ? COLORS.textMuted : COLORS.white} size={14} />
+                <Text style={[styles.pageBtnText, dropdownPage <= 1 && styles.pageBtnTextDisabled]}>Prev</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.pageInfoText}>
+                Page {dropdownPage} of {totalPages} ({filteredDevices.length} total)
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.pageBtn, dropdownPage >= totalPages && styles.pageBtnDisabled]}
+                onPress={() => setDropdownPage(p => Math.min(totalPages, p + 1))}
+                disabled={dropdownPage >= totalPages}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.pageBtnText, dropdownPage >= totalPages && styles.pageBtnTextDisabled]}>Next</Text>
+                <ChevronRight color={dropdownPage >= totalPages ? COLORS.textMuted : COLORS.white} size={14} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Metrics & Filter Pills */}
@@ -646,22 +790,191 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  locateBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  dropdownSection: {
     backgroundColor: COLORS.cardBackground,
+    borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: COLORS.accent,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
+    borderColor: COLORS.cardBorder,
+    padding: SPACING.md,
+    marginBottom: SPACING.md,
     ...SHADOWS.sm,
   },
-  locateBtnText: {
+  dropdownHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  dropdownSectionLabel: {
     color: COLORS.accent,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
+  },
+  dropdownSectionHint: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  dropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#131D31',
+    borderWidth: 1.5,
+    borderColor: COLORS.cardBorderSubtle,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  dropdownTriggerActive: {
+    borderColor: COLORS.accent,
+  },
+  triggerIconBg: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  triggerInfoCol: {
+    flex: 1,
+    marginRight: 8,
+  },
+  triggerHouseText: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  triggerSubText: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  triggerStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  triggerStatusText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  chevronWrap: {
+    paddingLeft: 4,
+  },
+  dropdownPanel: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.cardBorderSubtle,
+    paddingTop: 10,
+  },
+  dropdownScrollList: {
+    maxHeight: 220,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0E1626',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 6,
+  },
+  dropdownItemSelected: {
+    borderColor: COLORS.accent,
+    backgroundColor: '#15243C',
+  },
+  itemIconBg: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  itemTextCol: {
+    flex: 1,
+    marginRight: 8,
+  },
+  itemNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  itemHouseName: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  itemSelectedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  itemSelectedBadgeText: {
+    color: COLORS.white,
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  itemDetailsSub: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    marginTop: 1,
+  },
+  itemPpmBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  itemPpmText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  paginationBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  pageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorderSubtle,
+    gap: 3,
+  },
+  pageBtnDisabled: {
+    opacity: 0.35,
+  },
+  pageBtnText: {
+    color: COLORS.white,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  pageBtnTextDisabled: {
+    color: COLORS.textMuted,
+  },
+  pageInfoText: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
   },
   autoTourBtn: {
     flexDirection: 'row',
