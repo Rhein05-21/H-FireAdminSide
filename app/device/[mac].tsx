@@ -417,7 +417,10 @@ export default function DeviceDetailsScreen() {
         <View style={styles.actionButtonsCol}>
           <TouchableOpacity 
             style={styles.mapActionBtn}
-            onPress={() => router.push('/(tabs)/map')}
+            onPress={() => router.push({
+              pathname: '/(tabs)/map',
+              params: { focusMac: device.mac }
+            })}
             activeOpacity={0.8}
           >
             <Compass color={COLORS.accent} size={18} style={{ marginRight: 8 }} />

@@ -55,11 +55,13 @@ const SECTOR_LOT_POSITIONS: Array<{ top: string; left: string }> = [
 
 interface CommunityMapProps {
   devices: DeviceRecord[];
+  initialFocusMac?: string;
   onSelectDevice?: (device: DeviceRecord) => void;
 }
 
 export const CommunityMap: React.FC<CommunityMapProps> = ({ 
   devices, 
+  initialFocusMac,
   onSelectDevice,
 }) => {
   const router = useRouter();
@@ -103,53 +105,76 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
     }
   }, [filteredDevices, onSelectDevice]);
 
-  // Synchronize and auto-select a random device on initial load or update
+  // Synchronize and focus device on initial load, parameter change, or list update
   useEffect(() => {
     if (devices.length === 0) {
       setSelectedDevice(null);
       return;
     }
-    if (!selectedDevice) {
-      const randomIndex = Math.floor(Math.random() * devices.length);
-      focusOnDevice(devices[randomIndex], false);
-    } else {
+
+    // 1. If explicit initialFocusMac was provided (e.g. from "Locate Node on Community Map")
+    if (initialFocusMac) {
+      const target = devices.find(d => d.mac.toUpperCase() === initialFocusMac.toUpperCase());
+      if (target) {
+        focusOnDevice(target, false);
+        return;
+      }
+    }
+
+    // 2. Keep currently selected device fresh if still in list
+    if (selectedDevice) {
       const fresh = devices.find(d => d.mac === selectedDevice.mac);
       if (fresh) {
         setSelectedDevice(fresh);
-      } else {
-        const randomIndex = Math.floor(Math.random() * devices.length);
-        focusOnDevice(devices[randomIndex], false);
+        return;
       }
     }
+
+    // 3. Deterministic fallback: prioritize hazard node, or first device (never random!)
+    const hazard = devices.find(d => d.current_status === 'Danger') || devices.find(d => d.current_status === 'Warning');
+    focusOnDevice(hazard || devices[0], false);
+  }, [devices, initialFocusMac]);
+
+  // Find all nodes belonging to the SAME household
+  const getSameHouseholdDevices = useCallback((curr: DeviceRecord | null) => {
+    if (!curr) return [];
+    return devices.filter(d => {
+      if (curr.profile_id && d.profile_id && curr.profile_id === d.profile_id) return true;
+      if (curr.house_name && d.house_name && curr.house_name.trim().toLowerCase() === d.house_name.trim().toLowerCase()) return true;
+      if (curr.block_lot && d.block_lot && curr.block_lot.trim().toLowerCase() === d.block_lot.trim().toLowerCase()) return true;
+      return false;
+    });
   }, [devices]);
 
-  // Locate random device handler: jumps to a random device (different from current)
-  const locateRandomDevice = useCallback((fromAuto: boolean = false) => {
-    const candidateList = filteredDevices.length > 0 ? filteredDevices : devices;
-    if (!candidateList || candidateList.length === 0) return;
+  // Locate household node handler: locates / cycles nodes of the SAME household, or re-centers on the current node
+  const locateHouseholdNode = useCallback(() => {
+    if (!selectedDevice || devices.length === 0) return;
 
-    let targetDevice: DeviceRecord;
-    if (candidateList.length === 1) {
-      targetDevice = candidateList[0];
+    const sameHouseholdDevices = getSameHouseholdDevices(selectedDevice);
+
+    if (sameHouseholdDevices.length > 1) {
+      // Multiple devices in this household: cycle to the next device of the same household
+      const currentIdx = sameHouseholdDevices.findIndex(d => d.mac === selectedDevice.mac);
+      const nextIdx = (currentIdx + 1) % sameHouseholdDevices.length;
+      focusOnDevice(sameHouseholdDevices[nextIdx], true);
     } else {
-      // Pick a random device different from the currently selected one
-      const pool = candidateList.filter(d => d.mac !== selectedDevice?.mac);
-      const candidates = pool.length > 0 ? pool : candidateList;
-      const randomIndex = Math.floor(Math.random() * candidates.length);
-      targetDevice = candidates[randomIndex];
+      // Re-center and re-focus on this specific household device where it is positioned
+      focusOnDevice(selectedDevice, true);
     }
+  }, [devices, selectedDevice, getSameHouseholdDevices, focusOnDevice]);
 
-    focusOnDevice(targetDevice, !fromAuto);
-  }, [devices, filteredDevices, selectedDevice, focusOnDevice]);
-
-  // Automatic cycle / tour through random devices
+  // Sequential tour across community nodes (not random)
   useEffect(() => {
     if (!isAutoTour) return;
     const interval = setInterval(() => {
-      locateRandomDevice(true);
+      const list = filteredDevices.length > 0 ? filteredDevices : devices;
+      if (!list || list.length === 0) return;
+      const currentIdx = list.findIndex(d => d.mac === selectedDevice?.mac);
+      const nextIdx = (currentIdx + 1) % list.length;
+      focusOnDevice(list[nextIdx], false);
     }, 4000);
     return () => clearInterval(interval);
-  }, [isAutoTour, locateRandomDevice]);
+  }, [isAutoTour, filteredDevices, devices, selectedDevice, focusOnDevice]);
 
   const openGoogleMaps = (lat?: number, lng?: number) => {
     const latitude = lat || 14.1777;
@@ -190,12 +215,12 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
             style={styles.locateBtn}
             onPress={() => {
               setIsAutoTour(false);
-              locateRandomDevice(false);
+              locateHouseholdNode();
             }}
             activeOpacity={0.8}
           >
             <Compass color={COLORS.accent} size={15} style={{ marginRight: 6 }} />
-            <Text style={styles.locateBtnText}>Locate Devices</Text>
+            <Text style={styles.locateBtnText}>Locate Node</Text>
           </TouchableOpacity>
 
           <TouchableOpacity 

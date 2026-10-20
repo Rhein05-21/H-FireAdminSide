@@ -18,3 +18,7 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 *-firebase-adminsdk-*.json
+
+# Docs & Flowchart scratch
+research_paper*.txt
+flowcharts/

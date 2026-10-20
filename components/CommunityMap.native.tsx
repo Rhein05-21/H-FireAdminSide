@@ -23,12 +23,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface CommunityMapProps {
   devices: DeviceRecord[];
+  initialFocusMac?: string;
   onSelectDevice?: (device: DeviceRecord) => void;
   onTriggerEmergency?: (device: DeviceRecord) => void;
 }
 
 export const CommunityMap: React.FC<CommunityMapProps> = ({ 
   devices, 
+  initialFocusMac,
   onSelectDevice,
   onTriggerEmergency 
 }) => {
@@ -56,34 +58,63 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
     }
   }, []);
 
-  const locateRandomDevice = useCallback(() => {
-    if (!devices || devices.length === 0) return;
-    if (devices.length === 1) {
-      focusOnDevice(devices[0]);
-      return;
-    }
-    const pool = devices.filter(d => d.mac !== selectedDevice?.mac);
-    const candidates = pool.length > 0 ? pool : devices;
-    const randomIndex = Math.floor(Math.random() * candidates.length);
-    focusOnDevice(candidates[randomIndex]);
-  }, [devices, selectedDevice, focusOnDevice]);
+  // Find all nodes belonging to the SAME household
+  const getSameHouseholdDevices = useCallback((curr: DeviceRecord | null) => {
+    if (!curr) return [];
+    return devices.filter(d => {
+      if (curr.profile_id && d.profile_id && curr.profile_id === d.profile_id) return true;
+      if (curr.house_name && d.house_name && curr.house_name.trim().toLowerCase() === d.house_name.trim().toLowerCase()) return true;
+      if (curr.block_lot && d.block_lot && curr.block_lot.trim().toLowerCase() === d.block_lot.trim().toLowerCase()) return true;
+      return false;
+    });
+  }, [devices]);
 
-  // Synchronize and auto-select a random device on initial load
+  // Locate household node handler: locates / cycles nodes of the SAME household, or re-centers on the current node
+  const locateHouseholdNode = useCallback(() => {
+    if (!selectedDevice || devices.length === 0) return;
+
+    const sameHouseholdDevices = getSameHouseholdDevices(selectedDevice);
+
+    if (sameHouseholdDevices.length > 1) {
+      // Cycle to the next device/node of the same household
+      const currentIdx = sameHouseholdDevices.findIndex(d => d.mac === selectedDevice.mac);
+      const nextIdx = (currentIdx + 1) % sameHouseholdDevices.length;
+      focusOnDevice(sameHouseholdDevices[nextIdx]);
+    } else {
+      // Re-center on this household device position
+      focusOnDevice(selectedDevice);
+    }
+  }, [devices, selectedDevice, getSameHouseholdDevices, focusOnDevice]);
+
+  // Synchronize and focus device on initial load, parameter change, or list update
   useEffect(() => {
     if (devices.length === 0) {
       setSelectedDevice(null);
       return;
     }
-    if (!selectedDevice) {
-      const randomIndex = Math.floor(Math.random() * devices.length);
-      focusOnDevice(devices[randomIndex]);
-    } else {
+
+    // 1. Explicit initialFocusMac
+    if (initialFocusMac) {
+      const target = devices.find(d => d.mac.toUpperCase() === initialFocusMac.toUpperCase());
+      if (target) {
+        focusOnDevice(target);
+        return;
+      }
+    }
+
+    // 2. Keep selected device updated
+    if (selectedDevice) {
       const fresh = devices.find(d => d.mac === selectedDevice.mac);
       if (fresh) {
         setSelectedDevice(fresh);
+        return;
       }
     }
-  }, [devices]);
+
+    // 3. Fallback: prioritize hazard or first device (never random!)
+    const hazard = devices.find(d => d.current_status === 'Danger') || devices.find(d => d.current_status === 'Warning');
+    focusOnDevice(hazard || devices[0]);
+  }, [devices, initialFocusMac]);
 
   const darkMapStyle = [
     { elementType: 'geometry', stylers: [{ color: '#1a202c' }] },
@@ -152,11 +183,11 @@ export const CommunityMap: React.FC<CommunityMapProps> = ({
       <View style={styles.controlsRow}>
         <TouchableOpacity 
           style={[styles.controlBtn, styles.locateBtn]}
-          onPress={locateRandomDevice}
+          onPress={locateHouseholdNode}
           activeOpacity={0.8}
         >
           <Compass color={COLORS.accent} size={18} style={{ marginRight: 6 }} />
-          <Text style={styles.locateBtnText}>Locate Devices</Text>
+          <Text style={styles.locateBtnText}>Locate Node</Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
